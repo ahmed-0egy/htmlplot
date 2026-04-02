@@ -10,7 +10,7 @@ import html
 import math
 from typing import TYPE_CHECKING, Callable, Sequence
 
-from .themes import get_text_color, resolve_colors
+from .themes import get_color, get_text_color, resolve_colors, PALETTES, PALETTE_ALIASES
 from ._utils import nice_ticks
 
 if TYPE_CHECKING:
@@ -218,6 +218,10 @@ class Axes:
         colors: list[str] | None = None,
         height: int = 200,
         density: bool = False,
+        cumulative: bool | int = False,
+        data_range: tuple[float, float] | None = None,
+        weights: Sequence[float] | None = None,
+        orientation: str = "vertical",
     ) -> "Axes":
         """Histogram – mirrors ``matplotlib.Axes.hist``.
 
@@ -228,48 +232,96 @@ class Axes:
         bins:
             Number of equal-width bins, **or** an explicit list of bin edges.
         density:
-            If True, normalise bars so their areas sum to 1 (like a PDF).
+            If True, normalise bars so their areas sum to 1 (probability
+            density function — each bar's area represents the probability of
+            falling in that bin).
+        cumulative:
+            If True, each bar shows the running total up to and including
+            that bin.  Pass ``-1`` for the reverse (complementary CDF /
+            survival-function) histogram.  When combined with *density*,
+            the last bar reaches 1.0.
+        data_range:
+            ``(min, max)`` pair to restrict observations before binning.
+            Mirrors matplotlib's ``range`` keyword.
+        weights:
+            Per-observation weights.  Bin heights become sums of weights
+            instead of raw counts.
+        orientation:
+            ``"vertical"`` (default) – bars grow upward;
+            ``"horizontal"`` – bins on the y-axis (delegates to
+            :meth:`barh`).
         """
         if title:
             self._title = title
 
         data = [float(x) for x in data]
+        _weights: list[float] = list(weights) if weights is not None else [1.0] * len(data)
+
+        # Apply data_range filter
+        if data_range is not None:
+            lo_r, hi_r = data_range
+            pairs = [(x, w) for x, w in zip(data, _weights) if lo_r <= x <= hi_r]
+            if pairs:
+                data, _weights = map(list, zip(*pairs))  # type: ignore[assignment]
+            else:
+                data, _weights = [], []
+
+        if not data:
+            return self
+
         _min_d, _max_d = min(data), max(data)
 
         # Build bin edges
         if isinstance(bins, int):
             n_bins = bins
-            step = (_max_d - _min_d) / n_bins if _max_d != _min_d else 1
+            step = (_max_d - _min_d) / n_bins if _max_d != _min_d else 1.0
             edges = [_min_d + step * i for i in range(n_bins + 1)]
         else:
             edges = list(bins)
             n_bins = len(edges) - 1
 
-        # Count
-        counts = [0] * n_bins
-        for x in data:
+        # Accumulate weighted counts
+        counts: list[float] = [0.0] * n_bins
+        for x, w in zip(data, _weights):
+            placed = False
             for i in range(n_bins):
                 if edges[i] <= x < edges[i + 1]:
-                    counts[i] += 1
+                    counts[i] += w
+                    placed = True
                     break
-            else:
-                if x == edges[-1]:
-                    counts[-1] += 1
+            if not placed and x == edges[-1]:
+                counts[-1] += w
 
+        # Density normalisation (area = 1)
         if density:
-            total = sum(counts)
+            total_w = sum(counts)
             bin_widths = [edges[i + 1] - edges[i] for i in range(n_bins)]
-            counts = [c / (total * bw) if total else 0
+            counts = [c / (total_w * bw) if total_w and bw else 0.0
                       for c, bw in zip(counts, bin_widths)]
 
-        # Build x-axis labels: midpoints
-        labels = [f"{(edges[i] + edges[i+1]) / 2:.3g}" for i in range(n_bins)]
+        # Cumulative transform
+        if cumulative:
+            running = 0.0
+            cum_counts: list[float] = []
+            for c in counts:
+                running += c
+                cum_counts.append(running)
+            counts = cum_counts
+            if cumulative == -1:          # complementary / survival
+                peak = counts[-1] if counts else 1.0
+                counts = [peak - c for c in counts]
 
-        # Delegate to bar()
-        self.bar(labels, counts, title=None, fmt=fmt,
-                 palette=colors if colors else palette,
-                 height=height)
-        # Override chart type so to_html can customise if needed
+        # Bin-midpoint labels
+        labels = [f"{(edges[i] + edges[i + 1]) / 2:.3g}" for i in range(n_bins)]
+
+        if orientation == "horizontal":
+            self.barh(labels, counts, title=None, fmt=fmt,
+                      palette=colors if colors else palette)
+        else:
+            self.bar(labels, counts, title=None, fmt=fmt,
+                     palette=colors if colors else palette,
+                     height=height)
+
         if self._chart:
             self._chart["subtype"] = "hist"
             self._chart["edges"] = edges
@@ -442,6 +494,387 @@ class Axes:
         )
 
     # ------------------------------------------------------------------
+
+    def pie(
+        self,
+        x: Sequence[float],
+        labels: Sequence[str] | None = None,
+        *,
+        colors: Sequence[str] | None = None,
+        explode: Sequence[float] | None = None,
+        autopct: str | Callable | None = None,
+        pctdistance: float = 0.6,
+        shadow: bool = False,
+        labeldistance: float = 1.15,
+        startangle: float = 90,
+        radius: float = 1.0,
+        counterclock: bool = True,
+        normalize: bool = True,
+        title: str | None = None,
+        svg_height: int = 260,
+        donut: float = 0.0,
+    ) -> "Axes":
+        """Pie / donut chart – mirrors ``matplotlib.Axes.pie``.
+
+        Parameters
+        ----------
+        x:
+            Wedge sizes.  Normalised to sum-to-1 unless *normalize=False*.
+        labels:
+            Text label for each wedge.  Shown in a right-side legend.
+        colors:
+            Explicit hex colours, cycled if fewer than the number of wedges.
+        explode:
+            Per-wedge radial offset as a fraction of the outer radius
+            (0 = no offset, 0.1 = 10 % explode).
+        autopct:
+            Annotate each wedge with its percentage.  Pass a %-style format
+            string like ``"%.1f%%"`` or a callable ``(pct: float) -> str``.
+        pctdistance:
+            Radial fraction at which the *autopct* label is drawn (default 0.6).
+        shadow:
+            Draw a subtle elliptical shadow beneath the pie.
+        labeldistance:
+            Kept for API parity; labels are rendered in the legend.
+        startangle:
+            Degrees counter-clockwise from 3 o'clock at which the first wedge
+            starts.  Default 90 places the first edge at 12 o'clock.
+        radius:
+            Outer radius scaling factor (default 1.0).
+        counterclock:
+            If True (default), wedges are drawn counter-clockwise.
+        normalize:
+            Rescale *x* so values sum to 1.  Default True.
+        donut:
+            Fraction (0–0.9) for a centred hole: 0 = solid pie, 0.5 = donut.
+        svg_height:
+            Pixel height of the SVG element.
+        """
+        if title:
+            self._title = title
+
+        x = [float(v) for v in x]
+        n = len(x)
+        if n == 0:
+            return self
+
+        total = sum(x)
+        fractions = [v / total for v in x] if total > 0 else [1.0 / n] * n
+
+        _dc = ["#f0604a", "#2ed090", "#4a82c8", "#f0a030",
+               "#b060f0", "#40d0d0", "#e0c030", "#c04060"]
+        wedge_colors = (
+            [colors[i % len(colors)] for i in range(n)]
+            if colors
+            else [_dc[i % len(_dc)] for i in range(n)]
+        )
+        wedge_labels = list(labels) if labels else [f"Slice {i + 1}" for i in range(n)]
+
+        self._chart = {
+            "type": "pie",
+            "fractions": fractions,
+            "labels": wedge_labels,
+            "colors": wedge_colors,
+            "explode": list(explode) if explode else [0.0] * n,
+            "autopct": autopct,
+            "pctdistance": pctdistance,
+            "shadow": shadow,
+            "startangle": startangle,
+            "counterclock": counterclock,
+            "radius": radius,
+            "svg_height": svg_height,
+            "donut": max(0.0, min(0.9, float(donut))),
+            "x_raw": x,
+        }
+        return self
+
+    # ------------------------------------------------------------------
+
+    def boxplot(
+        self,
+        data: Sequence[Sequence[float]],
+        labels: Sequence[str] | None = None,
+        *,
+        title: str | None = None,
+        vert: bool = True,
+        notch: bool = False,
+        whis: float | tuple[float, float] = 1.5,
+        showfliers: bool = True,
+        showmeans: bool = False,
+        meanline: bool = False,
+        widths: float = 0.5,
+        patch_artist: bool = True,
+        showcaps: bool = True,
+        colors: Sequence[str] | None = None,
+        palette: str = "blues",
+        svg_height: int = 240,
+        xlabel: str = "",
+        ylabel: str = "",
+    ) -> "Axes":
+        """Box-and-whisker plot – mirrors ``matplotlib.Axes.boxplot``.
+
+        Parameters
+        ----------
+        data:
+            List of 1-D arrays, one per group.
+        labels:
+            Tick label for each group.
+        vert:
+            If True (default), boxes are vertical (values on y-axis).
+        notch:
+            If True, draw a notch representing a 95 % CI around the median.
+        whis:
+            Whisker reach as a multiple of IQR (default 1.5 → Tukey fences),
+            **or** an explicit ``(lower_pct, upper_pct)`` percentile pair.
+        showfliers:
+            If True (default), overlay individual outlier points.
+        showmeans:
+            If True, mark the mean.
+        meanline:
+            If True (with *showmeans*), draw the mean as a dashed line across
+            the box; otherwise a triangle marker is used.
+        widths:
+            Box width as a fraction of the per-group slot width (default 0.5).
+        patch_artist:
+            If True (default), fill boxes with colour.
+        showcaps:
+            If True (default), draw horizontal caps at whisker tips.
+        colors:
+            Explicit hex colours per box; overrides *palette*.
+        palette:
+            Named palette for automatic colouring.
+        svg_height:
+            Pixel height of the SVG element.
+        xlabel, ylabel:
+            Axis labels.
+        """
+        if title:
+            self._title = title
+
+        groups = [[float(v) for v in grp] for grp in data]
+        n = len(groups)
+        group_labels = list(labels) if labels else [f"Group {i + 1}" for i in range(n)]
+
+        _dc = ["#4a82c8", "#2ed090", "#f0604a", "#f0a030",
+               "#b060f0", "#40d0d0", "#e0c030", "#c04060"]
+        box_colors = (
+            [colors[i % len(colors)] for i in range(n)]
+            if colors
+            else [_dc[i % len(_dc)] for i in range(n)]
+        )
+
+        self._chart = {
+            "type": "boxplot",
+            "groups": groups,
+            "labels": group_labels,
+            "stats": [self._box_stats(g, whis) for g in groups],
+            "colors": box_colors,
+            "vert": vert,
+            "notch": notch,
+            "showfliers": showfliers,
+            "showmeans": showmeans,
+            "meanline": meanline,
+            "widths": widths,
+            "patch_artist": patch_artist,
+            "showcaps": showcaps,
+            "svg_height": svg_height,
+            "xlabel": xlabel,
+            "ylabel": ylabel,
+        }
+        return self
+
+    # ------------------------------------------------------------------
+
+    def heatmap(
+        self,
+        data: Sequence[Sequence[float]],
+        *,
+        xlabels: Sequence[str] | None = None,
+        ylabels: Sequence[str] | None = None,
+        fmt: str | Callable | None = ".2g",
+        cmap: str = "blues",
+        annot: bool = True,
+        linewidths: float = 2.0,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        cbar: bool = True,
+        title: str | None = None,
+        svg_height: int | None = None,
+    ) -> "Axes":
+        """Heatmap – mirrors ``seaborn.heatmap`` / ``matplotlib.imshow``.
+
+        Parameters
+        ----------
+        data:
+            2-D array of shape (n_rows × n_cols).
+        xlabels:
+            Column header labels (x-axis, left → right).
+        ylabels:
+            Row header labels (y-axis, top → bottom).
+        fmt:
+            Cell annotation format spec (e.g. ``".2g"``, ``".0%"``) or a
+            callable ``(value) -> str``.  Set to ``None`` to disable
+            annotations even when *annot=True*.
+        cmap:
+            Named colour palette from :data:`~htmlplot.PALETTES` (default
+            ``"blues"``).
+        annot:
+            If True (default), overlay each cell with its formatted value.
+        linewidths:
+            Width in pixels of the grid lines between cells (default 2).
+        vmin, vmax:
+            Clip the colour scale.  Defaults to the data's min / max.
+        cbar:
+            If True (default), draw a colour-scale bar on the right.
+        svg_height:
+            Total SVG height in pixels.  Auto-sized from the data shape
+            when omitted.
+        """
+        if title:
+            self._title = title
+
+        rows = [[float(v) for v in row] for row in data]
+        n_rows = len(rows)
+        n_cols = max((len(r) for r in rows), default=0)
+        for r in rows:
+            while len(r) < n_cols:
+                r.append(0.0)
+
+        flat = [v for row in rows for v in row]
+        _vmin = vmin if vmin is not None else (min(flat) if flat else 0.0)
+        _vmax = vmax if vmax is not None else (max(flat) if flat else 1.0)
+        if _vmax == _vmin:
+            _vmax = _vmin + 1.0
+
+        _xl = list(xlabels) if xlabels else [str(j) for j in range(n_cols)]
+        _yl = list(ylabels) if ylabels else [str(i) for i in range(n_rows)]
+
+        if svg_height is None:
+            cell_h_est = max(22, min(52, 300 // max(n_rows, 1)))
+            svg_height = n_rows * cell_h_est + 80
+
+        self._chart = {
+            "type": "heatmap",
+            "data": rows,
+            "n_rows": n_rows,
+            "n_cols": n_cols,
+            "xlabels": _xl,
+            "ylabels": _yl,
+            "fmt": fmt,
+            "cmap": cmap,
+            "annot": annot,
+            "linewidths": linewidths,
+            "vmin": _vmin,
+            "vmax": _vmax,
+            "cbar": cbar,
+            "svg_height": svg_height,
+        }
+        return self
+
+    # ------------------------------------------------------------------
+
+    def stackedbar(
+        self,
+        labels: Sequence[str],
+        data: "dict[str, Sequence[float]] | Sequence[Sequence[float]]",
+        *,
+        series_labels: Sequence[str] | None = None,
+        colors: Sequence[str] | None = None,
+        palette: str | list[str] | None = None,
+        height: int = 200,
+        fmt: str | Callable | None = None,
+        normalized: bool = False,
+        title: str | None = None,
+        xlabel: str = "",
+        ylabel: str = "",
+    ) -> "Axes":
+        """Stacked vertical bar chart.
+
+        Parameters
+        ----------
+        labels:
+            Category labels along the x-axis.
+        data:
+            Either a :class:`dict` mapping series names to value arrays, or a
+            plain list of arrays (name via *series_labels*).
+        series_labels:
+            Series names when *data* is a list.
+        colors:
+            Explicit hex colours per series.
+        palette:
+            Named palette (used only when *colors* is not provided).
+        height:
+            Pixel height of the chart area.
+        fmt:
+            Format for value labels shown in tooltips.
+        normalized:
+            If True, render as a 100 % stacked bar chart.
+        xlabel, ylabel:
+            Axis labels.
+        """
+        if title:
+            self._title = title
+
+        labels = list(labels)
+        n_cats = len(labels)
+
+        if isinstance(data, dict):
+            series_pairs: list[tuple[str, list[float]]] = [
+                (k, [float(v) for v in vs]) for k, vs in data.items()
+            ]
+        else:
+            _sl = (list(series_labels) if series_labels
+                   else [f"Series {i + 1}" for i in range(len(data))])
+            series_pairs = [(_sl[i], [float(v) for v in vs])
+                            for i, vs in enumerate(data)]
+
+        # Pad / truncate each series to n_cats
+        series_pairs = [(name, (vs + [0.0] * n_cats)[:n_cats])
+                        for name, vs in series_pairs]
+
+        _dc = ["#4a82c8", "#2ed090", "#f0604a", "#f0a030",
+               "#b060f0", "#40d0d0", "#e0c030", "#c04060"]
+        s_colors = (
+            [colors[i % len(colors)] for i in range(len(series_pairs))]
+            if colors
+            else [_dc[i % len(_dc)] for i in range(len(series_pairs))]
+        )
+
+        if normalized:
+            col_totals = [
+                sum(vs[j] for _, vs in series_pairs) for j in range(n_cats)
+            ]
+            series_pairs = [
+                (name, [v / col_totals[j] * 100 if col_totals[j] else 0.0
+                        for j, v in enumerate(vs)])
+                for name, vs in series_pairs
+            ]
+
+        # Compute per-column running bottoms
+        bottoms = [0.0] * n_cats
+        series_out: list[dict] = []
+        for name, vs in series_pairs:
+            segs = [{"bottom": bottoms[j], "value": vs[j], "label": labels[j]}
+                    for j in range(n_cats)]
+            for j in range(n_cats):
+                bottoms[j] += vs[j]
+            series_out.append({"name": name, "segments": segs})
+
+        self._chart = {
+            "type": "stackedbar",
+            "labels": labels,
+            "series": series_out,
+            "series_colors": s_colors,
+            "max_total": max(bottoms) if bottoms else 1.0,
+            "chart_height": height,
+            "fmt": fmt,
+            "normalized": normalized,
+            "xlabel": xlabel,
+            "ylabel": ylabel,
+        }
+        return self
+
+    # ------------------------------------------------------------------
     # Annotations / extras
     # ------------------------------------------------------------------
 
@@ -477,6 +910,14 @@ class Axes:
                 if self._chart.get("series"):
                     parts.append(self._render_legend())
                 parts.append(self._render_svg_chart())
+            elif ct == "pie":
+                parts.append(self._render_pie())
+            elif ct == "boxplot":
+                parts.append(self._render_boxplot())
+            elif ct == "heatmap":
+                parts.append(self._render_heatmap())
+            elif ct == "stackedbar":
+                parts.append(self._render_stackedbar())
 
         for ann_type, ann_data in self._annotations:
             if ann_type == "infobox":
@@ -808,3 +1249,614 @@ class Axes:
 
         parts.append('</svg></div>')
         return "\n".join(parts)
+
+    # ------------------------------------------------------------------
+    # Pie chart renderer
+    # ------------------------------------------------------------------
+
+    def _render_pie(self) -> str:
+        chart = self._chart
+        fractions: list[float] = chart["fractions"]
+        labels: list[str] = chart["labels"]
+        colors: list[str] = chart["colors"]
+        explode: list[float] = chart["explode"]
+        autopct = chart["autopct"]
+        pctdistance: float = chart["pctdistance"]
+        shadow: bool = chart["shadow"]
+        startangle: float = chart["startangle"]
+        counterclock: bool = chart["counterclock"]
+        radius: float = chart["radius"]
+        H: int = chart["svg_height"]
+        donut: float = chart["donut"]
+        x_raw: list[float] = chart["x_raw"]
+        n = len(fractions)
+
+        _font = "font-family=\"'Segoe UI',system-ui,sans-serif\""
+
+        # Layout: pie occupies a left square; legend on the right
+        pie_size = min(H - 16, 256)
+        cx = pie_size / 2 + 10
+        cy = H / 2
+        R = pie_size / 2 * 0.78 * radius
+        leg_x = cx + R + 32
+        W = max(int(leg_x + 140), 340)
+
+        parts: list[str] = []
+        parts.append(
+            f'<div class="hp-svg-wrap">'
+            f'<svg viewBox="0 0 {W} {H}" width="100%" '
+            f'style="display:block;overflow:visible;">'
+        )
+
+        if shadow:
+            parts.append(
+                f'<ellipse cx="{cx + 5:.1f}" cy="{cy + R * 0.15 + 5:.1f}" '
+                f'rx="{R:.1f}" ry="{R * 0.12:.1f}" '
+                f'fill="rgba(0,0,0,0.22)"/>'
+            )
+
+        # sweep=0 → CCW on screen (standard for counterclock=True)
+        sweep = 0 if counterclock else 1
+        delta_sign = 1 if counterclock else -1
+        θ = math.radians(startangle)
+
+        for i in range(n):
+            frac = fractions[i]
+            if frac <= 0:
+                continue
+            color = colors[i]
+            ex = explode[i]
+
+            delta = 2 * math.pi * frac * delta_sign
+            end_θ = θ + delta
+            mid_θ = θ + delta / 2
+
+            ecx = cx + ex * R * math.cos(mid_θ)
+            ecy = cy - ex * R * math.sin(mid_θ)
+
+            # For a full-circle slice use two half-arcs to avoid degenerate SVG
+            if abs(frac - 1.0) < 1e-9:
+                # Split into two 180° arcs
+                half_θ = θ + math.pi * delta_sign
+                mx = ecx + R * math.cos(half_θ)
+                my = ecy - R * math.sin(half_θ)
+                x1 = ecx + R * math.cos(θ)
+                y1 = ecy - R * math.sin(θ)
+                if donut > 0:
+                    inner_R = R * donut
+                    imx = ecx + inner_R * math.cos(half_θ)
+                    imy = ecy - inner_R * math.sin(half_θ)
+                    ix1 = ecx + inner_R * math.cos(θ)
+                    iy1 = ecy - inner_R * math.sin(θ)
+                    path_d = (
+                        f"M {x1:.2f},{y1:.2f} A {R:.2f},{R:.2f} 0 0,{sweep} {mx:.2f},{my:.2f} "
+                        f"A {R:.2f},{R:.2f} 0 0,{sweep} {x1:.2f},{y1:.2f} "
+                        f"L {ix1:.2f},{iy1:.2f} "
+                        f"A {inner_R:.2f},{inner_R:.2f} 0 0,{1-sweep} {imx:.2f},{imy:.2f} "
+                        f"A {inner_R:.2f},{inner_R:.2f} 0 0,{1-sweep} {ix1:.2f},{iy1:.2f} Z"
+                    )
+                else:
+                    path_d = (
+                        f"M {ecx:.2f},{ecy:.2f} L {x1:.2f},{y1:.2f} "
+                        f"A {R:.2f},{R:.2f} 0 0,{sweep} {mx:.2f},{my:.2f} "
+                        f"A {R:.2f},{R:.2f} 0 0,{sweep} {x1:.2f},{y1:.2f} Z"
+                    )
+            else:
+                x1 = ecx + R * math.cos(θ)
+                y1 = ecy - R * math.sin(θ)
+                x2 = ecx + R * math.cos(end_θ)
+                y2 = ecy - R * math.sin(end_θ)
+                large_arc = 1 if abs(delta) > math.pi else 0
+                if donut > 0:
+                    inner_R = R * donut
+                    ix1 = ecx + inner_R * math.cos(θ)
+                    iy1 = ecy - inner_R * math.sin(θ)
+                    ix2 = ecx + inner_R * math.cos(end_θ)
+                    iy2 = ecy - inner_R * math.sin(end_θ)
+                    path_d = (
+                        f"M {x1:.2f},{y1:.2f} "
+                        f"A {R:.2f},{R:.2f} 0 {large_arc},{sweep} {x2:.2f},{y2:.2f} "
+                        f"L {ix2:.2f},{iy2:.2f} "
+                        f"A {inner_R:.2f},{inner_R:.2f} 0 {large_arc},{1-sweep} "
+                        f"{ix1:.2f},{iy1:.2f} Z"
+                    )
+                else:
+                    path_d = (
+                        f"M {ecx:.2f},{ecy:.2f} L {x1:.2f},{y1:.2f} "
+                        f"A {R:.2f},{R:.2f} 0 {large_arc},{sweep} {x2:.2f},{y2:.2f} Z"
+                    )
+
+            pct = frac * 100
+            tip = _tip(labels[i], f"{x_raw[i]:g}", f"{pct:.1f}%")
+            parts.append(
+                f'<path d="{path_d}" fill="{color}" '
+                f'stroke="rgba(0,0,0,0.12)" stroke-width="1.5" '
+                f'data-tip="{tip}" style="cursor:default;"/>'
+            )
+
+            # Autopct text inside wedge
+            if autopct is not None:
+                px = ecx + pctdistance * R * math.cos(mid_θ)
+                py = ecy - pctdistance * R * math.sin(mid_θ)
+                if callable(autopct):
+                    pct_text = autopct(pct)
+                elif isinstance(autopct, str):
+                    try:
+                        pct_text = autopct % pct
+                    except (TypeError, ValueError):
+                        pct_text = autopct.format(pct)
+                else:
+                    pct_text = f"{pct:.1f}%"
+                tc = get_text_color(color)
+                parts.append(
+                    f'<text x="{px:.2f}" y="{py + 4:.2f}" '
+                    f'text-anchor="middle" font-size="10" '
+                    f'fill="{tc}" font-weight="600" {_font}>'
+                    f'{_escape(pct_text)}</text>'
+                )
+
+            θ = end_θ
+
+        # Right-side legend
+        _lf = "#8090a4"
+        item_h = 20
+        leg_y0 = max(cy - n * item_h / 2, 8)
+        for j in range(n):
+            ly = leg_y0 + j * item_h
+            c = colors[j]
+            pct_str = f"{fractions[j] * 100:.1f}%"
+            tip = _tip(labels[j], f"{x_raw[j]:g}", pct_str)
+            parts.append(
+                f'<rect x="{leg_x:.1f}" y="{ly - 7:.1f}" width="11" height="11" '
+                f'rx="3" fill="{c}" data-tip="{tip}" style="cursor:default;"/>'
+            )
+            parts.append(
+                f'<text x="{leg_x + 16:.1f}" y="{ly + 2:.1f}" '
+                f'font-size="11" fill="{_lf}" {_font}>'
+                f'{_escape(labels[j])}</text>'
+            )
+
+        parts.append('</svg></div>')
+        return "\n".join(parts)
+
+    # ------------------------------------------------------------------
+    # Box-plot renderer
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _box_stats(data: list[float], whis) -> dict:
+        """Compute Tukey box-plot statistics for one group."""
+        if not data:
+            return {"q1": 0.0, "q3": 0.0, "median": 0.0, "mean": 0.0,
+                    "whisker_lo": 0.0, "whisker_hi": 0.0, "outliers": []}
+        sd = sorted(data)
+        n = len(sd)
+
+        def _pct(p: float) -> float:
+            idx = (n - 1) * p / 100.0
+            lo = int(idx)
+            hi = lo + 1
+            if hi >= n:
+                return sd[lo]
+            return sd[lo] * (1.0 - (idx - lo)) + sd[hi] * (idx - lo)
+
+        q1, median, q3 = _pct(25), _pct(50), _pct(75)
+        iqr = q3 - q1
+        mean = sum(data) / n
+
+        if isinstance(whis, (int, float)):
+            lo_fence, hi_fence = q1 - whis * iqr, q3 + whis * iqr
+        else:
+            lo_fence, hi_fence = _pct(whis[0]), _pct(whis[1])
+
+        within = [x for x in sd if lo_fence <= x <= hi_fence]
+        return {
+            "q1": q1, "q3": q3, "median": median, "mean": mean,
+            "whisker_lo": min(within) if within else q1,
+            "whisker_hi": max(within) if within else q3,
+            "outliers": [x for x in sd if x < lo_fence or x > hi_fence],
+        }
+
+    def _render_boxplot(self) -> str:
+        chart = self._chart
+        stats_list: list[dict] = chart["stats"]
+        groups: list[list[float]] = chart["groups"]
+        labels: list[str] = chart["labels"]
+        colors: list[str] = chart["colors"]
+        showfliers: bool = chart["showfliers"]
+        showmeans: bool = chart["showmeans"]
+        meanline: bool = chart["meanline"]
+        widths_frac: float = chart["widths"]
+        patch_artist: bool = chart["patch_artist"]
+        showcaps: bool = chart["showcaps"]
+        use_notch: bool = chart["notch"]
+        H: int = chart["svg_height"]
+        xlabel: str = chart["xlabel"]
+        ylabel: str = chart["ylabel"]
+        n = len(stats_list)
+
+        _font = "font-family=\"'Segoe UI',system-ui,sans-serif\""
+        _grid = 'stroke="#1e2535" stroke-width="1"'
+        _spine = 'stroke="#2a3040" stroke-width="1"'
+        _lf = 'fill="#5a6a80"'
+
+        W = 520
+        ML = 52 if ylabel else 28
+        MR, MT = 18, 12
+        MB = 40 if xlabel else 24
+        CW = W - ML - MR
+        CH = H - MT - MB
+
+        # Data range
+        all_v: list[float] = []
+        for st in stats_list:
+            all_v += [st["whisker_lo"], st["whisker_hi"]]
+            if showfliers:
+                all_v += st["outliers"]
+            if showmeans:
+                all_v.append(st["mean"])
+        if not all_v:
+            return ""
+
+        y_min, y_max = min(all_v), max(all_v)
+        y_pad = (y_max - y_min) * 0.10 if y_max != y_min else 0.5
+        y_lo, y_hi = y_min - y_pad, y_max + y_pad
+        y_ticks = nice_ticks(y_lo, y_hi, n=5)
+
+        def ty(v: float) -> float:
+            return MT + (y_hi - v) / (y_hi - y_lo) * CH if y_hi != y_lo else MT + CH / 2
+
+        slot_w = CW / n
+
+        def gx(i: int) -> float:
+            return ML + (i + 0.5) * slot_w
+
+        bhw = slot_w * widths_frac * 0.5  # box half-width
+
+        parts: list[str] = []
+        parts.append(
+            f'<div class="hp-svg-wrap">'
+            f'<svg viewBox="0 0 {W} {H}" width="100%" '
+            f'style="display:block;overflow:visible;">'
+        )
+
+        # Y grid + labels
+        for g in y_ticks:
+            if g < y_lo or g > y_hi:
+                continue
+            gy = ty(g)
+            parts.append(f'<line x1="{ML}" y1="{gy:.1f}" x2="{ML+CW}" y2="{gy:.1f}" {_grid}/>')
+            parts.append(
+                f'<text x="{ML-7}" y="{gy+3.5:.1f}" text-anchor="end" '
+                f'font-size="10" {_lf} {_font}>{g:g}</text>'
+            )
+
+        # Spines
+        parts.append(f'<line x1="{ML}" y1="{MT}" x2="{ML}" y2="{MT+CH}" {_spine}/>')
+        parts.append(f'<line x1="{ML}" y1="{MT+CH}" x2="{ML+CW}" y2="{MT+CH}" {_spine}/>')
+
+        # X labels
+        for i, lbl in enumerate(labels):
+            parts.append(
+                f'<text x="{gx(i):.1f}" y="{MT+CH+16}" text-anchor="middle" '
+                f'font-size="10" {_lf} {_font}>{_escape(str(lbl))}</text>'
+            )
+
+        if xlabel:
+            parts.append(
+                f'<text x="{ML+CW/2:.1f}" y="{H-4}" text-anchor="middle" '
+                f'font-size="10" {_lf} {_font}>{_escape(xlabel)}</text>'
+            )
+        if ylabel:
+            parts.append(
+                f'<text transform="rotate(-90)" x="{-(MT+CH/2):.1f}" y="13" '
+                f'text-anchor="middle" font-size="10" {_lf} {_font}>'
+                f'{_escape(ylabel)}</text>'
+            )
+
+        # Draw each box
+        for i, (st, color) in enumerate(zip(stats_list, colors)):
+            x = gx(i)
+            xl, xr = x - bhw, x + bhw
+            q1y, q3y = ty(st["q1"]), ty(st["q3"])
+            medy = ty(st["median"])
+            wloy, whiy = ty(st["whisker_lo"]), ty(st["whisker_hi"])
+
+            tip = _tip(
+                labels[i],
+                f"Median: {st['median']:g}",
+                f"Q1–Q3: {st['q1']:g} – {st['q3']:g}",
+                f"IQR: {st['q3']-st['q1']:g}",
+                f"Whiskers: [{st['whisker_lo']:g}, {st['whisker_hi']:g}]",
+            )
+
+            # Dashed whisker stems
+            parts.append(
+                f'<line x1="{x:.2f}" y1="{whiy:.2f}" x2="{x:.2f}" y2="{q3y:.2f}" '
+                f'stroke="{color}" stroke-width="1.5" stroke-dasharray="4,2"/>'
+            )
+            parts.append(
+                f'<line x1="{x:.2f}" y1="{q1y:.2f}" x2="{x:.2f}" y2="{wloy:.2f}" '
+                f'stroke="{color}" stroke-width="1.5" stroke-dasharray="4,2"/>'
+            )
+
+            # Caps
+            if showcaps:
+                caphw = bhw * 0.45
+                for cap_y in (whiy, wloy):
+                    parts.append(
+                        f'<line x1="{x-caphw:.2f}" y1="{cap_y:.2f}" '
+                        f'x2="{x+caphw:.2f}" y2="{cap_y:.2f}" '
+                        f'stroke="{color}" stroke-width="2"/>'
+                    )
+
+            # Box body
+            fill_a = f'fill="{color}" fill-opacity="0.30"' if patch_artist else 'fill="none"'
+            if use_notch and (st["q3"] - st["q1"]) > 0 and len(groups[i]) > 1:
+                iqr = st["q3"] - st["q1"]
+                notch_ext = 1.57 * iqr / math.sqrt(len(groups[i]))
+                nlo_y = ty(st["median"] - notch_ext)
+                nhi_y = ty(st["median"] + notch_ext)
+                nw = bhw * 0.45
+                notch_d = (
+                    f"M {xl:.2f},{q3y:.2f} L {xl:.2f},{nhi_y:.2f} "
+                    f"L {x-nw:.2f},{medy:.2f} L {xl:.2f},{nlo_y:.2f} "
+                    f"L {xl:.2f},{q1y:.2f} L {xr:.2f},{q1y:.2f} "
+                    f"L {xr:.2f},{nlo_y:.2f} L {x+nw:.2f},{medy:.2f} "
+                    f"L {xr:.2f},{nhi_y:.2f} L {xr:.2f},{q3y:.2f} Z"
+                )
+                parts.append(
+                    f'<path d="{notch_d}" {fill_a} stroke="{color}" stroke-width="1.5" '
+                    f'data-tip="{tip}" style="cursor:default;"/>'
+                )
+            else:
+                parts.append(
+                    f'<rect x="{xl:.2f}" y="{q3y:.2f}" '
+                    f'width="{2*bhw:.2f}" height="{max(q1y-q3y, 1):.2f}" '
+                    f'{fill_a} stroke="{color}" stroke-width="1.5" '
+                    f'data-tip="{tip}" style="cursor:default;"/>'
+                )
+
+            # Median line
+            parts.append(
+                f'<line x1="{xl:.2f}" y1="{medy:.2f}" x2="{xr:.2f}" y2="{medy:.2f}" '
+                f'stroke="{color}" stroke-width="2.5"/>'
+            )
+
+            # Mean
+            if showmeans:
+                meany = ty(st["mean"])
+                if meanline:
+                    parts.append(
+                        f'<line x1="{xl:.2f}" y1="{meany:.2f}" x2="{xr:.2f}" y2="{meany:.2f}" '
+                        f'stroke="{color}" stroke-width="1.5" stroke-dasharray="5,3" opacity="0.85"/>'
+                    )
+                else:
+                    ts = 5
+                    parts.append(
+                        f'<path d="M {x:.2f},{meany-ts:.2f} '
+                        f'L {x+ts:.2f},{meany+ts:.2f} L {x-ts:.2f},{meany+ts:.2f} Z" '
+                        f'fill="{color}" opacity="0.9"/>'
+                    )
+
+            # Outlier circles
+            if showfliers:
+                for ov in st["outliers"]:
+                    oty = ty(ov)
+                    otip = _tip(labels[i], f"Outlier: {ov:g}")
+                    parts.append(
+                        f'<circle cx="{x:.2f}" cy="{oty:.2f}" r="3.5" '
+                        f'fill="none" stroke="{color}" stroke-width="1.5" '
+                        f'data-tip="{otip}" style="cursor:default;"/>'
+                    )
+
+        parts.append('</svg></div>')
+        return "\n".join(parts)
+
+    # ------------------------------------------------------------------
+    # Heatmap renderer
+    # ------------------------------------------------------------------
+
+    def _render_heatmap(self) -> str:
+        chart = self._chart
+        data: list[list[float]] = chart["data"]
+        n_rows: int = chart["n_rows"]
+        n_cols: int = chart["n_cols"]
+        xlabels: list[str] = chart["xlabels"]
+        ylabels: list[str] = chart["ylabels"]
+        fmt = chart["fmt"]
+        cmap: str = chart["cmap"]
+        annot: bool = chart["annot"]
+        lw: float = chart["linewidths"]
+        vmin: float = chart["vmin"]
+        vmax: float = chart["vmax"]
+        cbar: bool = chart["cbar"]
+        H: int = chart["svg_height"]
+
+        if n_rows == 0 or n_cols == 0:
+            return ""
+
+        _font = "font-family=\"'Segoe UI',system-ui,sans-serif\""
+        _lf = 'fill="#5a6a80"'
+
+        W = 520
+        ML = 72   # y-label space
+        MR = 55 if cbar else 18
+        MT = 32   # x-label space at top
+        MB = 14
+        CW = W - ML - MR
+        CH = H - MT - MB
+
+        cw = CW / n_cols
+        ch_cell = CH / n_rows
+
+        parts: list[str] = []
+        clip_id = f"hphmc{id(self) & 0xFFFFFF}"
+        grad_id = f"hphmg{id(self) & 0xFFFFFF}"
+
+        parts.append(
+            f'<div class="hp-svg-wrap">'
+            f'<svg viewBox="0 0 {W} {H}" width="100%" '
+            f'style="display:block;overflow:visible;">'
+        )
+        parts.append(
+            f'<defs><clipPath id="{clip_id}">'
+            f'<rect x="{ML}" y="{MT}" width="{CW}" height="{CH}"/>'
+            f'</clipPath></defs>'
+        )
+
+        # Cells
+        for ri in range(n_rows):
+            for ci in range(n_cols):
+                v = data[ri][ci]
+                color = get_color(v, vmin, vmax, cmap)
+                rx = ML + ci * cw
+                ry = MT + ri * ch_cell
+                tip = _tip(f"({ylabels[ri]}, {xlabels[ci]})", f"Value: {v:g}")
+                sw = lw if lw > 0 else 0
+                parts.append(
+                    f'<rect x="{rx:.2f}" y="{ry:.2f}" '
+                    f'width="{cw:.2f}" height="{ch_cell:.2f}" '
+                    f'fill="{color}" stroke="#0d1117" stroke-width="{sw}" '
+                    f'data-tip="{tip}" style="cursor:default;"/>'
+                )
+
+                if annot and fmt is not None:
+                    # Accept ".2g" or "{:.2g}" style format specs
+                    if callable(fmt):
+                        cell_txt = fmt(v)
+                    elif isinstance(fmt, str):
+                        spec = fmt if fmt.startswith("{") else f"{{:{fmt}}}"
+                        try:
+                            cell_txt = spec.format(v)
+                        except (ValueError, KeyError):
+                            cell_txt = f"{v:g}"
+                    else:
+                        cell_txt = f"{v:g}"
+
+                    tc = get_text_color(color)
+                    fs = max(8, min(13, int(min(cw, ch_cell) * 0.38)))
+                    tx_p = rx + cw / 2
+                    ty_p = ry + ch_cell / 2 + 4
+                    parts.append(
+                        f'<text x="{tx_p:.2f}" y="{ty_p:.2f}" '
+                        f'text-anchor="middle" font-size="{fs}" '
+                        f'fill="{tc}" font-weight="500" {_font}>'
+                        f'{_escape(cell_txt)}</text>'
+                    )
+
+        # X-axis labels (above the grid)
+        for ci, lbl in enumerate(xlabels):
+            lx = ML + (ci + 0.5) * cw
+            parts.append(
+                f'<text x="{lx:.2f}" y="{MT-8}" text-anchor="middle" '
+                f'font-size="10" {_lf} {_font}>{_escape(str(lbl))}</text>'
+            )
+
+        # Y-axis labels (left)
+        for ri, lbl in enumerate(ylabels):
+            ly = MT + (ri + 0.5) * ch_cell + 4
+            parts.append(
+                f'<text x="{ML-8}" y="{ly:.2f}" text-anchor="end" '
+                f'font-size="10" {_lf} {_font}>{_escape(str(lbl))}</text>'
+            )
+
+        # Colour-scale bar
+        if cbar:
+            cb_x = W - MR + 10
+            cb_y, cb_h, cb_w = MT, CH, 14
+
+            pal_name = PALETTE_ALIASES.get(cmap, cmap)
+            stops = PALETTES.get(pal_name, ["#c6e0f5", "#1a6aaa"])
+            # Gradient: top = vmax (last stop), bottom = vmin (first stop)
+            rev = list(reversed(stops))
+            stop_strs = []
+            for si, sc in enumerate(rev):
+                off = int(100 * si / (len(rev) - 1)) if len(rev) > 1 else 0
+                stop_strs.append(f'<stop offset="{off}%" stop-color="{sc}"/>')
+
+            parts.append(
+                f'<defs><linearGradient id="{grad_id}" x1="0" y1="0" x2="0" y2="1">'
+                + "".join(stop_strs)
+                + f'</linearGradient></defs>'
+            )
+            parts.append(
+                f'<rect x="{cb_x}" y="{cb_y}" width="{cb_w}" height="{cb_h}" '
+                f'fill="url(#{grad_id})" rx="3"/>'
+            )
+
+            cb_ticks = nice_ticks(vmin, vmax, n=4)
+            for ct in cb_ticks:
+                if ct < vmin or ct > vmax:
+                    continue
+                frac = (ct - vmin) / (vmax - vmin)
+                tick_y = cb_y + cb_h * (1 - frac)  # vmax at top
+                parts.append(
+                    f'<text x="{cb_x + cb_w + 4}" y="{tick_y + 3:.1f}" '
+                    f'font-size="9" {_lf} {_font}>{ct:g}</text>'
+                )
+
+        parts.append('</svg></div>')
+        return "\n".join(parts)
+
+    # ------------------------------------------------------------------
+    # Stacked bar renderer
+    # ------------------------------------------------------------------
+
+    def _render_stackedbar(self) -> str:
+        chart = self._chart
+        labels: list[str] = chart["labels"]
+        series: list[dict] = chart["series"]
+        colors: list[str] = chart["series_colors"]
+        max_total: float = chart["max_total"]
+        ch: int = chart["chart_height"]
+        fmt = chart["fmt"]
+
+        # Legend
+        leg_items = []
+        for s, c in zip(series, colors):
+            leg_items.append(
+                f'<div class="hp-legend-item">'
+                f'<div class="hp-legend-dot" style="background:{c};border-radius:3px;"></div>'
+                f'{_escape(s["name"])}'
+                f'</div>'
+            )
+        legend_html = f'<div class="hp-legend">{"".join(leg_items)}</div>'
+
+        cols: list[str] = []
+        for j, lbl in enumerate(labels):
+            total_val = sum(s["segments"][j]["value"] for s in series)
+            total_h_px = int(total_val / max_total * ch) if max_total else 0
+            total_label = _fmt_value(total_val, fmt)
+
+            # Segments: first series → bottom (flex-direction: column-reverse)
+            seg_divs: list[str] = []
+            for s, c in zip(series, colors):
+                v = s["segments"][j]["value"]
+                if v <= 0:
+                    continue
+                tip = _tip(s["name"], f"{lbl}: {_fmt_value(v, fmt)}")
+                seg_divs.append(
+                    f'<div class="hp-sbar-seg" style="flex:{v:.6g};background:{c};" '
+                    f'data-tip="{tip}"></div>'
+                )
+
+            inner = "\n".join(seg_divs)
+            cols.append(
+                f'<div class="hp-bar-col">'
+                f'<div class="hp-bar-value-label">{_escape(total_label)}</div>'
+                f'<div class="hp-sbar-body" style="height:{total_h_px}px;">'
+                f'{inner}'
+                f'</div>'
+                f'<div class="hp-bar-baseline"></div>'
+                f'<div class="hp-bar-xlabel">{_escape(str(lbl))}</div>'
+                f'</div>'
+            )
+
+        return (
+            legend_html
+            + f'<div class="hp-bar-outer">'
+            f'<div class="hp-bar-chart" style="height:{ch}px;">'
+            + "\n".join(cols)
+            + f'</div></div>'
+        )

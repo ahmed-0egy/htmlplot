@@ -30,10 +30,12 @@ class Figure:
         title: str = "Figure",
         theme: str = "dark",
         width: int | None = None,
+        ncols: int = 1,
     ) -> None:
         self.title = title
         self.theme = theme          # "dark" | "light"
         self.width = width          # optional max-width override (px)
+        self._ncols = max(1, ncols)
         self._axes: list[Axes] = []
 
     # ------------------------------------------------------------------
@@ -77,9 +79,34 @@ class Figure:
         ax.kmplot(*args, **kwargs)
         return self
 
+    def pie(self, *args, **kwargs) -> "Figure":
+        ax = self._ensure_single_ax()
+        ax.pie(*args, **kwargs)
+        return self
+
+    def boxplot(self, *args, **kwargs) -> "Figure":
+        ax = self._ensure_single_ax()
+        ax.boxplot(*args, **kwargs)
+        return self
+
+    def heatmap(self, *args, **kwargs) -> "Figure":
+        ax = self._ensure_single_ax()
+        ax.heatmap(*args, **kwargs)
+        return self
+
+    def stackedbar(self, *args, **kwargs) -> "Figure":
+        ax = self._ensure_single_ax()
+        ax.stackedbar(*args, **kwargs)
+        return self
+
     def infobox(self, *args, **kwargs) -> "Figure":
         ax = self._ensure_single_ax()
         ax.infobox(*args, **kwargs)
+        return self
+
+    def divider(self, *args, **kwargs) -> "Figure":
+        ax = self._ensure_single_ax()
+        ax.divider(*args, **kwargs)
         return self
 
     def set_title(self, title: str) -> "Figure":
@@ -107,11 +134,20 @@ class Figure:
             block — suitable for embedding in a larger HTML document.
             Either way the required CSS is included.
         """
-        cards = "\n".join(ax.to_html() for ax in self._axes)
+        if self._ncols > 1 and self._axes:
+            rows_html: list[str] = []
+            for i in range(0, len(self._axes), self._ncols):
+                row_cards = "\n".join(
+                    ax.to_html() for ax in self._axes[i:i + self._ncols]
+                )
+                rows_html.append(f'<div class="hp-figure-row">\n{row_cards}\n</div>')
+            inner = "\n".join(rows_html)
+        else:
+            inner = "\n".join(ax.to_html() for ax in self._axes)
 
         width_style = f"max-width:{self.width}px;" if self.width else ""
         body = (
-            f'<div class="hp-figure" style="{width_style}">\n{cards}\n</div>'
+            f'<div class="hp-figure" style="{width_style}">\n{inner}\n</div>'
         )
 
         if full_page:
@@ -164,7 +200,7 @@ def subplots(
     - ``nrows=1, ncols>1``  → returns ``(fig, [ax1, ax2, …])``
     - ``nrows>1``           → returns ``(fig, [[ax00, ax01], [ax10, …], …])``
     """
-    fig = Figure(title=title, theme=theme, width=width)
+    fig = Figure(title=title, theme=theme, width=width, ncols=ncols)
 
     if nrows == 1 and ncols == 1:
         ax = fig.add_axes()

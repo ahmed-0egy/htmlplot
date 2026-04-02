@@ -230,6 +230,36 @@ _DARK_CSS = """\
 
 .hp-barh-track { cursor: default; }
 .hp-bar-col    { cursor: default; }
+
+/* Figure grid layout ---------------------------------------------------- */
+.hp-figure-row {
+  display: flex;
+  gap: 16px;
+}
+
+.hp-figure-row .hp-card {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Stacked bar chart ----------------------------------------------------- */
+.hp-sbar-body {
+  width: 100%;
+  display: flex;
+  flex-direction: column-reverse;
+  overflow: hidden;
+  border-radius: 5px 5px 0 0;
+}
+
+.hp-sbar-seg {
+  min-height: 2px;
+  transition: filter 0.12s;
+}
+
+.hp-sbar-seg:hover {
+  filter: brightness(1.18);
+  cursor: default;
+}
 """
 
 _LIGHT_CSS = """\
@@ -451,6 +481,36 @@ _LIGHT_CSS = """\
 
 .hp-barh-track { cursor: default; }
 .hp-bar-col    { cursor: default; }
+
+/* Figure grid layout ---------------------------------------------------- */
+.hp-figure-row {
+  display: flex;
+  gap: 16px;
+}
+
+.hp-figure-row .hp-card {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Stacked bar chart ----------------------------------------------------- */
+.hp-sbar-body {
+  width: 100%;
+  display: flex;
+  flex-direction: column-reverse;
+  overflow: hidden;
+  border-radius: 5px 5px 0 0;
+}
+
+.hp-sbar-seg {
+  min-height: 2px;
+  transition: filter 0.12s;
+}
+
+.hp-sbar-seg:hover {
+  filter: brightness(0.90);
+  cursor: default;
+}
 """
 
 _PAGE_TEMPLATE = """\
