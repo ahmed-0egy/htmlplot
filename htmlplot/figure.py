@@ -8,6 +8,8 @@ import tempfile
 import webbrowser
 from typing import Sequence
 
+import html as _html
+
 from .axes import Axes
 from ._styles import get_css, render_page
 from ._scripts import get_script
@@ -96,6 +98,16 @@ class Figure:
     def stackedbar(self, *args, **kwargs) -> "Figure":
         self._ensure_single_ax().stackedbar(*args, **kwargs); return self
 
+    def pie(self, *args, **kwargs) -> "Figure":
+        ax = self._ensure_single_ax()
+        ax.pie(*args, **kwargs)
+        return self
+
+    def monthbars(self, *args, **kwargs) -> "Figure":
+        ax = self._ensure_single_ax()
+        ax.monthbars(*args, **kwargs)
+        return self
+
     def infobox(self, *args, **kwargs) -> "Figure":
         self._ensure_single_ax().infobox(*args, **kwargs); return self
 
@@ -134,6 +146,7 @@ class Figure:
         """
         cell_h = self._cell_height()
 
+<<<<<<< Updated upstream
         if self._ncols > 1 and self._axes:
             rows_html: list[str] = []
             # When height is constrained, rows share the figure height equally
@@ -168,6 +181,21 @@ class Figure:
             fig_style += f"height:{self.height}px;display:flex;flex-direction:column;"
 
         body = f'<div class="hp-figure" style="{fig_style}">\n{inner}\n</div>'
+=======
+        fig_heading = ""
+        if (self.title and self.title != "Figure"
+                and len(self._axes) > 1):
+            fig_heading = (
+                f'<div class="hp-card-title" style="margin-bottom:8px;">'
+                f'{_html.escape(self.title)}</div>\n'
+            )
+
+        width_style = f"max-width:{self.width}px;" if self.width else ""
+        body = (
+            f'<div class="hp-figure" style="{width_style}">\n'
+            f'{fig_heading}{cards}\n</div>'
+        )
+>>>>>>> Stashed changes
 
         if full_page:
             return render_page(self.title, body, self.theme, script=get_script())
@@ -255,7 +283,14 @@ def subplots(
     fig = Figure(title=title, theme=theme, width=width, height=height, ncols=ncols)
 
     if nrows == 1 and ncols == 1:
+<<<<<<< Updated upstream
         return fig, fig.add_axes()
+=======
+        ax = fig.add_axes()
+        if title and title != "Figure":
+            ax.set_title(title)
+        return fig, ax
+>>>>>>> Stashed changes
 
     grid: list[list[Axes]] = [
         [fig.add_axes() for _ in range(ncols)]

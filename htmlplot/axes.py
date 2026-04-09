@@ -93,6 +93,8 @@ class Axes:
         max_val: float | None = None,
         sort: bool = False,
         label_width: int = 150,
+        xlabel: str = "",
+        ylabel: str = "",
     ) -> "Axes":
         """Horizontal bar chart – mirrors ``matplotlib.Axes.barh``.
 
@@ -118,6 +120,10 @@ class Axes:
             Sort bars ascending by value.
         label_width:
             CSS pixel width of the label column.
+        xlabel:
+            Label for the value axis (shown below bars).
+        ylabel:
+            Label for the category axis (shown above bars).
         """
         if title:
             self._title = title
@@ -149,7 +155,8 @@ class Axes:
                 "value_label": _fmt_value(value, fmt),
             })
 
-        self._chart = {"type": "barh", "bars": bars, "label_width": label_width}
+        self._chart = {"type": "barh", "bars": bars, "label_width": label_width,
+                       "xlabel": xlabel, "ylabel": ylabel}
         return self
 
     # ------------------------------------------------------------------
@@ -166,6 +173,8 @@ class Axes:
         max_val: float | None = None,
         sort: bool = False,
         height: int = 200,
+        xlabel: str = "",
+        ylabel: str = "",
     ) -> "Axes":
         """Vertical bar chart – mirrors ``matplotlib.Axes.bar``.
 
@@ -173,6 +182,10 @@ class Axes:
         ----------
         height:
             Pixel height of the chart area (excluding x-axis labels).
+        xlabel:
+            Label for the category axis (shown below bars).
+        ylabel:
+            Label for the value axis (shown above the chart).
         """
         if title:
             self._title = title
@@ -204,7 +217,8 @@ class Axes:
                 "value_label": _fmt_value(value, fmt),
             })
 
-        self._chart = {"type": "bar", "bars": bars, "chart_height": height}
+        self._chart = {"type": "bar", "bars": bars, "chart_height": height,
+                       "xlabel": xlabel, "ylabel": ylabel}
         return self
 
     # ------------------------------------------------------------------
@@ -343,6 +357,8 @@ class Axes:
         xlabel: str = "",
         ylabel: str = "",
         step: bool = False,
+        smooth: bool = False,
+        tension: float = 0.35,
         markers: bool = False,
         marker_size: int = 4,
         svg_height: int = 210,
@@ -365,6 +381,13 @@ class Axes:
         step:
             If ``True``, draw a staircase / step line instead of straight
             segments (useful for survival curves, ECDFs, etc.).
+        smooth:
+            If ``True``, use cubic-bezier interpolation (Catmull-Rom to Bezier)
+            between data points for a smoother visual appearance.
+        tension:
+            Controls the curvature when ``smooth=True``.  0 = straight lines,
+            higher values = more curvature.  Default 0.35 approximates
+            Chart.js ``tension: 0.3``.
         markers:
             If ``True``, overlay a circle at every data point.
         marker_size:
@@ -392,7 +415,8 @@ class Axes:
             "lineplot", x_list, y_list,
             labels=labels, colors=colors, ci=ci,
             xlabel=xlabel, ylabel=ylabel,
-            step=step, markers=markers, marker_size=marker_size,
+            step=step, smooth=smooth, tension=tension,
+            markers=markers, marker_size=marker_size,
             svg_height=svg_height,
         )
         return self
@@ -499,6 +523,7 @@ class Axes:
 
     def pie(
         self,
+<<<<<<< Updated upstream
         x: Sequence[float],
         labels: Sequence[str] | None = None,
         *,
@@ -551,10 +576,43 @@ class Axes:
             Fraction (0–0.9) for a centred hole: 0 = solid pie, 0.5 = donut.
         svg_height:
             Pixel height of the SVG element.
+=======
+        labels: Sequence[str],
+        values: Sequence[float],
+        *,
+        title: str | None = None,
+        colors: list[str] | None = None,
+        fmt: str | Callable | None = "{:.1f}%",
+        show_legend: bool = True,
+        donut: bool = True,
+        donut_ratio: float = 0.55,
+        size: int = 200,
+    ) -> "Axes":
+        """Pie / doughnut chart rendered as SVG.
+
+        Parameters
+        ----------
+        labels:
+            Slice labels.
+        values:
+            Numeric values (will be normalised to percentages).
+        colors:
+            Explicit list of hex colours; cycles a built-in palette if None.
+        fmt:
+            Format string applied to the *percentage* value shown in tooltips
+            and the optional legend.  Receives a float in [0, 100].
+        donut:
+            If True (default), render a doughnut (hollow centre).
+        donut_ratio:
+            Inner radius as a fraction of the outer radius (0–1).
+        size:
+            Diameter of the chart in CSS pixels.
+>>>>>>> Stashed changes
         """
         if title:
             self._title = title
 
+<<<<<<< Updated upstream
         x = [float(v) for v in x]
         n = len(x)
         if n == 0:
@@ -587,11 +645,40 @@ class Axes:
             "svg_height": svg_height,
             "donut": max(0.0, min(0.9, float(donut))),
             "x_raw": x,
+=======
+        _default_colors = [
+            "#f0604a", "#2ed090", "#4a8fff", "#f0a030",
+            "#aa66ff", "#40d0d0", "#e0c030", "#c04060",
+            "#6a9ffa", "#e06080", "#50c080", "#d0a060",
+        ]
+        _colors = colors if colors else _default_colors
+
+        total = sum(values)
+        slices = []
+        for i, (label, value) in enumerate(zip(labels, values)):
+            pct = (value / total * 100) if total else 0
+            slices.append({
+                "label": label,
+                "value": value,
+                "pct": pct,
+                "color": _colors[i % len(_colors)],
+                "pct_label": _fmt_value(pct, fmt),
+            })
+
+        self._chart = {
+            "type": "pie",
+            "slices": slices,
+            "donut": donut,
+            "donut_ratio": donut_ratio,
+            "size": size,
+            "show_legend": show_legend,
+>>>>>>> Stashed changes
         }
         return self
 
     # ------------------------------------------------------------------
 
+<<<<<<< Updated upstream
     def boxplot(
         self,
         data: Sequence[Sequence[float]],
@@ -813,10 +900,41 @@ class Axes:
             If True, render as a 100 % stacked bar chart.
         xlabel, ylabel:
             Axis labels.
+=======
+    def monthbars(
+        self,
+        values: Sequence[float],
+        *,
+        title: str | None = None,
+        month_labels: Sequence[str] | None = None,
+        colors: list[str] | Callable | None = None,
+        height: int = 80,
+        fmt: str | Callable | None = None,
+        xlabel: str = "",
+        ylabel: str = "",
+    ) -> "Axes":
+        """Compact 12-bar month chart.
+
+        Parameters
+        ----------
+        values:
+            Exactly 12 numeric values, one per month.
+        month_labels:
+            Short month labels; defaults to ``["Jan", …, "Dec"]``.
+        colors:
+            List of 12 hex colours, or a callable ``(index, value) -> str``.
+        height:
+            Pixel height of the tallest bar.
+        xlabel:
+            Label for the month axis (shown below month labels).
+        ylabel:
+            Label for the value axis (shown above bars).
+>>>>>>> Stashed changes
         """
         if title:
             self._title = title
 
+<<<<<<< Updated upstream
         labels = list(labels)
         n_cats = len(labels)
 
@@ -874,6 +992,34 @@ class Axes:
             "xlabel": xlabel,
             "ylabel": ylabel,
         }
+=======
+        _default_months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        _labels = list(month_labels) if month_labels else _default_months
+        values = list(values)
+
+        if colors is None:
+            bar_colors = resolve_colors(values, palette="gyr")
+        elif callable(colors):
+            bar_colors = [colors(i, v) for i, v in enumerate(values)]
+        else:
+            bar_colors = list(colors)
+
+        _max = max(values) if values else 1
+        bars = []
+        for i, (lbl, val, col) in enumerate(zip(_labels, values, bar_colors)):
+            h = max(2, int((val / _max) * height)) if _max else 2
+            bars.append({
+                "label": lbl,
+                "value": val,
+                "bar_height_px": h,
+                "color": col,
+                "value_label": _fmt_value(val, fmt) if fmt else f"{val * 100:.0f}%",
+            })
+
+        self._chart = {"type": "monthbars", "bars": bars, "chart_height": height,
+                       "xlabel": xlabel, "ylabel": ylabel}
+>>>>>>> Stashed changes
         return self
 
     # ------------------------------------------------------------------
@@ -917,6 +1063,7 @@ class Axes:
                 f'<div class="hp-card-title">{_escape(self._title)}</div>'
             )
 
+<<<<<<< Updated upstream
         # ── Compute effective chart height from cell constraint ──────────
         # Subtract card padding and optional title block to get the area
         # available for the actual chart content.
@@ -970,6 +1117,22 @@ class Axes:
             # Always restore the original height so re-renders are correct
             if height_key and orig_h is not None and self._chart:
                 self._chart[height_key] = orig_h
+=======
+        if self._chart:
+            ct = self._chart["type"]
+            if ct == "barh":
+                parts.append(self._render_barh())
+            elif ct == "bar":
+                parts.append(self._render_bar())
+            elif ct == "pie":
+                parts.append(self._render_pie())
+            elif ct == "monthbars":
+                parts.append(self._render_monthbars())
+            elif ct in ("lineplot", "scatter"):
+                if self._chart.get("series"):
+                    parts.append(self._render_legend())
+                parts.append(self._render_svg_chart())
+>>>>>>> Stashed changes
 
         for ann_type, ann_data in self._annotations:
             if ann_type == "infobox":
@@ -994,10 +1157,17 @@ class Axes:
     def _render_barh(self) -> str:
         bars = self._chart["bars"]
         lw = self._chart.get("label_width", 150)
-        rows = []
+        ylabel = self._chart.get("ylabel", "")
+        xlabel = self._chart.get("xlabel", "")
+        parts: list[str] = []
+        if ylabel:
+            parts.append(
+                f'<div style="font-size:10px;color:#5a6a80;margin-bottom:6px;">'
+                f'{_escape(ylabel)}</div>'
+            )
         for b in bars:
             tip = _tip(b["label"], b["value_label"])
-            rows.append(
+            parts.append(
                 f'<div class="hp-barh-row">'
                 f'<div class="hp-barh-label" style="width:{lw}px">'
                 f'{_escape(str(b["label"]))}'
@@ -1011,11 +1181,24 @@ class Axes:
                 f'</div>'
                 f'</div>'
             )
-        return "\n".join(rows)
+        if xlabel:
+            parts.append(
+                f'<div style="font-size:10px;color:#5a6a80;text-align:center;'
+                f'margin-top:8px;">{_escape(xlabel)}</div>'
+            )
+        return "\n".join(parts)
 
     def _render_bar(self) -> str:
         bars = self._chart["bars"]
         ch = self._chart.get("chart_height", 200)
+        ylabel = self._chart.get("ylabel", "")
+        xlabel = self._chart.get("xlabel", "")
+        parts: list[str] = []
+        if ylabel:
+            parts.append(
+                f'<div style="font-size:10px;color:#5a6a80;margin-bottom:4px;">'
+                f'{_escape(ylabel)}</div>'
+            )
         cols = []
         for b in bars:
             tip = _tip(b["label"], b["value_label"])
@@ -1032,13 +1215,149 @@ class Axes:
                 f'</div>'
             )
         inner = "\n".join(cols)
-        return (
+        parts.append(
             f'<div class="hp-bar-outer">'
             f'<div class="hp-bar-chart" style="height:{ch}px;">'
             f'{inner}'
             f'</div>'
             f'</div>'
         )
+        if xlabel:
+            parts.append(
+                f'<div style="font-size:10px;color:#5a6a80;text-align:center;'
+                f'margin-top:6px;">{_escape(xlabel)}</div>'
+            )
+        return "\n".join(parts)
+
+    # ------------------------------------------------------------------
+
+    def _render_pie(self) -> str:
+        slices = self._chart["slices"]
+        donut = self._chart.get("donut", True)
+        ratio = self._chart.get("donut_ratio", 0.55)
+        size = self._chart.get("size", 200)
+        show_legend = self._chart.get("show_legend", True)
+
+        R = size / 2
+        CX, CY = R, R
+        IR = R * ratio if donut else 0
+
+        # Build SVG arcs
+        paths = []
+        angle = -math.pi / 2  # start at 12 o'clock
+        for s in slices:
+            sweep = (s["pct"] / 100) * 2 * math.pi
+            if sweep < 0.001:
+                angle += sweep
+                continue
+
+            x1_o = CX + R * math.cos(angle)
+            y1_o = CY + R * math.sin(angle)
+            x2_o = CX + R * math.cos(angle + sweep)
+            y2_o = CY + R * math.sin(angle + sweep)
+
+            large = 1 if sweep > math.pi else 0
+
+            if donut:
+                x1_i = CX + IR * math.cos(angle + sweep)
+                y1_i = CY + IR * math.sin(angle + sweep)
+                x2_i = CX + IR * math.cos(angle)
+                y2_i = CY + IR * math.sin(angle)
+                d = (
+                    f"M {x1_o:.2f} {y1_o:.2f} "
+                    f"A {R:.2f} {R:.2f} 0 {large} 1 {x2_o:.2f} {y2_o:.2f} "
+                    f"L {x1_i:.2f} {y1_i:.2f} "
+                    f"A {IR:.2f} {IR:.2f} 0 {large} 0 {x2_i:.2f} {y2_i:.2f} Z"
+                )
+            else:
+                d = (
+                    f"M {CX:.2f} {CY:.2f} "
+                    f"L {x1_o:.2f} {y1_o:.2f} "
+                    f"A {R:.2f} {R:.2f} 0 {large} 1 {x2_o:.2f} {y2_o:.2f} Z"
+                )
+
+            tip = _tip(s["label"], f"{s['value']:g}", s["pct_label"])
+            paths.append(
+                f'<path d="{d}" fill="{s["color"]}" stroke="#161b27" '
+                f'stroke-width="1.5" data-tip="{tip}" '
+                f'style="cursor:default;transition:filter 0.12s;" '
+                f'onmouseenter="this.style.filter=\'brightness(1.25)\'" '
+                f'onmouseleave="this.style.filter=\'none\'"/>'
+            )
+            angle += sweep
+
+        svg = (
+            f'<div class="hp-pie-wrap" style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;">'
+            f'<svg viewBox="0 0 {size} {size}" width="{size}" height="{size}" '
+            f'style="flex-shrink:0;">'
+            + "\n".join(paths)
+            + "</svg>"
+        )
+
+        if show_legend:
+            legend_items = []
+            for s in slices:
+                legend_items.append(
+                    f'<div class="hp-legend-item">'
+                    f'<div class="hp-legend-dot" style="background:{s["color"]};"></div>'
+                    f'{_escape(s["label"])} ({s["pct_label"]})'
+                    f'</div>'
+                )
+            svg += (
+                f'<div class="hp-pie-legend" style="display:flex;flex-direction:column;gap:6px;">'
+                + "\n".join(legend_items)
+                + "</div>"
+            )
+
+        svg += "</div>"
+        return svg
+
+    # ------------------------------------------------------------------
+
+    def _render_monthbars(self) -> str:
+        bars = self._chart["bars"]
+        ch = self._chart.get("chart_height", 80)
+        ylabel = self._chart.get("ylabel", "")
+        xlabel = self._chart.get("xlabel", "")
+
+        parts: list[str] = []
+        if ylabel:
+            parts.append(
+                f'<div style="font-size:10px;color:#5a6a80;margin-bottom:4px;">'
+                f'{_escape(ylabel)}</div>'
+            )
+
+        bar_els = []
+        label_els = []
+        for b in bars:
+            tip = _tip(b["label"], b["value_label"])
+            bar_els.append(
+                f'<div class="hp-mbar" data-tip="{tip}" '
+                f'style="height:{b["bar_height_px"]}px;background:{b["color"]};'
+                f'flex:1;border-radius:2px 2px 0 0;min-height:2px;'
+                f'cursor:default;transition:filter 0.12s;" '
+                f'onmouseenter="this.style.filter=\'brightness(1.25)\'" '
+                f'onmouseleave="this.style.filter=\'none\'"></div>'
+            )
+            label_els.append(
+                f'<div style="flex:1;font-size:10px;color:#5a6a80;text-align:center;">'
+                f'{_escape(b["label"][:3])}</div>'
+            )
+
+        parts.append(
+            f'<div style="display:flex;align-items:flex-end;gap:3px;height:{ch}px;">'
+            + "\n".join(bar_els)
+            + '</div>'
+            f'<div style="display:flex;gap:3px;margin-top:4px;">'
+            + "\n".join(label_els)
+            + '</div>'
+        )
+        if xlabel:
+            parts.append(
+                f'<div style="font-size:10px;color:#5a6a80;text-align:center;'
+                f'margin-top:6px;">{_escape(xlabel)}</div>'
+            )
+        return "\n".join(parts)
 
     # ------------------------------------------------------------------
 
@@ -1048,7 +1367,8 @@ class Axes:
         x_list, y_list, *,
         labels, colors, ci,
         xlabel, ylabel,
-        step, markers, marker_size,
+        step, smooth=False, tension=0.35,
+        markers, marker_size,
         svg_height,
     ) -> dict:
         """Pack all series data into the chart dict stored on self._chart."""
@@ -1078,6 +1398,8 @@ class Axes:
             "xlabel": xlabel,
             "ylabel": ylabel,
             "step": step,
+            "smooth": smooth,
+            "tension": tension,
             "markers": markers,
             "marker_size": marker_size,
             "scatter": chart_type == "scatter",
@@ -1104,6 +1426,26 @@ class Axes:
             )
         return f'<div class="hp-legend">{"".join(items)}</div>'
 
+    @staticmethod
+    def _smooth_bezier_path(px: list[float], py: list[float],
+                            tension: float = 0.35) -> str:
+        """Catmull-Rom to cubic-bezier SVG path through pixel-space points."""
+        n = len(px)
+        if n < 2:
+            return f'M {px[0]:.2f} {py[0]:.2f}' if n == 1 else ''
+        path = f'M {px[0]:.2f} {py[0]:.2f}'
+        for i in range(n - 1):
+            ip = max(0, i - 1)
+            in2 = min(n - 1, i + 2)
+            cp1x = px[i] + tension * (px[i + 1] - px[ip]) / 2
+            cp1y = py[i] + tension * (py[i + 1] - py[ip]) / 2
+            cp2x = px[i + 1] - tension * (px[in2] - px[i]) / 2
+            cp2y = py[i + 1] - tension * (py[in2] - py[i]) / 2
+            path += (f' C {cp1x:.2f} {cp1y:.2f}'
+                     f' {cp2x:.2f} {cp2y:.2f}'
+                     f' {px[i + 1]:.2f} {py[i + 1]:.2f}')
+        return path
+
     def _render_svg_chart(self) -> str:
         """Generic SVG renderer shared by lineplot, scatter, and kmplot."""
         chart = self._chart
@@ -1112,6 +1454,8 @@ class Axes:
         ylabel: str = chart.get("ylabel", "")
         svg_height: int = chart.get("svg_height", 210)
         is_step: bool = chart.get("step", False)
+        is_smooth: bool = chart.get("smooth", False)
+        tension: float = chart.get("tension", 0.35)
         show_markers: bool = chart.get("markers", False)
         is_scatter: bool = chart.get("scatter", False)
         marker_size: int = chart.get("marker_size", 4)
@@ -1268,8 +1612,11 @@ class Axes:
                     path = f'M {tx(xs[0]):.2f} {ty(ys[0]):.2f}'
                     for i in range(1, len(xs)):
                         path += f' H {tx(xs[i]):.2f} V {ty(ys[i]):.2f}'
-                    # Extend last segment to right edge
                     path += f' H {tx(xs[-1]):.2f}'
+                elif is_smooth and len(xs) > 2:
+                    spx = [tx(v) for v in xs]
+                    spy = [ty(v) for v in ys]
+                    path = self._smooth_bezier_path(spx, spy, tension)
                 else:
                     path = f'M {tx(xs[0]):.2f} {ty(ys[0]):.2f}'
                     path += "".join(
