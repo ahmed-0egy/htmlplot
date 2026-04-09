@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import tempfile
 import webbrowser
@@ -11,18 +12,32 @@ from .axes import Axes
 from ._styles import get_css, render_page
 from ._scripts import get_script
 
+# Vertical overhead inside each card that isn't the chart itself (px).
+# card-title font 10.5 px + margin-bottom 22 px ≈ 35 px title block
+_CARD_PAD_V = 48     # top-padding(26) + bottom-padding(22)
+_TITLE_H    = 35     # card-title block height when a title is present
+_ROW_GAP    = 16     # gap between rows / columns in a grid
+
 
 class Figure:
-    """A figure holds one or more :class:`Axes` panels arranged vertically.
+    """A figure holds one or more :class:`Axes` panels.
 
-    Usage::
-
-        fig, ax = hp.subplots(title="My Chart")
-        ax.barh(labels, values)
-        fig.show()          # open in browser
-        fig.save("out.html")
-        html = fig.to_html()        # embed in a larger page
-        # In Jupyter: just call  fig  at the end of a cell
+    Parameters
+    ----------
+    title:
+        Page / window title (not the chart title).
+    theme:
+        ``"dark"`` (default) or ``"light"``.
+    width:
+        Maximum width of the figure container in pixels.
+        Defaults to 820 px for single-column and auto-scales for grids.
+    height:
+        Total height of the figure container in pixels.  When set, charts
+        inside each cell are automatically scaled to fit — mirroring
+        matplotlib's ``figsize`` height behaviour.
+    ncols:
+        Number of columns in the subplot grid (set automatically by
+        :func:`subplots`; rarely needed directly).
     """
 
     def __init__(
@@ -30,11 +45,13 @@ class Figure:
         title: str = "Figure",
         theme: str = "dark",
         width: int | None = None,
+        height: int | None = None,
         ncols: int = 1,
     ) -> None:
         self.title = title
-        self.theme = theme          # "dark" | "light"
-        self.width = width          # optional max-width override (px)
+        self.theme = theme
+        self.width = width
+        self.height = height
         self._ncols = max(1, ncols)
         self._axes: list[Axes] = []
 
@@ -50,69 +67,43 @@ class Figure:
 
     # Convenience: let Figure proxy chart methods directly (single-panel use)
     def barh(self, *args, **kwargs) -> "Figure":
-        ax = self._ensure_single_ax()
-        ax.barh(*args, **kwargs)
-        return self
+        self._ensure_single_ax().barh(*args, **kwargs); return self
 
     def bar(self, *args, **kwargs) -> "Figure":
-        ax = self._ensure_single_ax()
-        ax.bar(*args, **kwargs)
-        return self
+        self._ensure_single_ax().bar(*args, **kwargs); return self
 
     def hist(self, *args, **kwargs) -> "Figure":
-        ax = self._ensure_single_ax()
-        ax.hist(*args, **kwargs)
-        return self
+        self._ensure_single_ax().hist(*args, **kwargs); return self
 
     def lineplot(self, *args, **kwargs) -> "Figure":
-        ax = self._ensure_single_ax()
-        ax.lineplot(*args, **kwargs)
-        return self
+        self._ensure_single_ax().lineplot(*args, **kwargs); return self
 
     def scatter(self, *args, **kwargs) -> "Figure":
-        ax = self._ensure_single_ax()
-        ax.scatter(*args, **kwargs)
-        return self
+        self._ensure_single_ax().scatter(*args, **kwargs); return self
 
     def kmplot(self, *args, **kwargs) -> "Figure":
-        ax = self._ensure_single_ax()
-        ax.kmplot(*args, **kwargs)
-        return self
+        self._ensure_single_ax().kmplot(*args, **kwargs); return self
 
     def pie(self, *args, **kwargs) -> "Figure":
-        ax = self._ensure_single_ax()
-        ax.pie(*args, **kwargs)
-        return self
+        self._ensure_single_ax().pie(*args, **kwargs); return self
 
     def boxplot(self, *args, **kwargs) -> "Figure":
-        ax = self._ensure_single_ax()
-        ax.boxplot(*args, **kwargs)
-        return self
+        self._ensure_single_ax().boxplot(*args, **kwargs); return self
 
     def heatmap(self, *args, **kwargs) -> "Figure":
-        ax = self._ensure_single_ax()
-        ax.heatmap(*args, **kwargs)
-        return self
+        self._ensure_single_ax().heatmap(*args, **kwargs); return self
 
     def stackedbar(self, *args, **kwargs) -> "Figure":
-        ax = self._ensure_single_ax()
-        ax.stackedbar(*args, **kwargs)
-        return self
+        self._ensure_single_ax().stackedbar(*args, **kwargs); return self
 
     def infobox(self, *args, **kwargs) -> "Figure":
-        ax = self._ensure_single_ax()
-        ax.infobox(*args, **kwargs)
-        return self
+        self._ensure_single_ax().infobox(*args, **kwargs); return self
 
     def divider(self, *args, **kwargs) -> "Figure":
-        ax = self._ensure_single_ax()
-        ax.divider(*args, **kwargs)
-        return self
+        self._ensure_single_ax().divider(*args, **kwargs); return self
 
     def set_title(self, title: str) -> "Figure":
-        ax = self._ensure_single_ax()
-        ax.set_title(title)
-        return self
+        self._ensure_single_ax().set_title(title); return self
 
     def _ensure_single_ax(self) -> Axes:
         if not self._axes:
@@ -123,6 +114,14 @@ class Figure:
     # Rendering
     # ------------------------------------------------------------------
 
+    def _cell_height(self) -> int | None:
+        """Return per-cell pixel height when the figure has a fixed height."""
+        if not self.height or not self._axes:
+            return None
+        nrows = max(1, math.ceil(len(self._axes) / self._ncols))
+        total_gap = (nrows - 1) * _ROW_GAP
+        return max(80, (self.height - total_gap) // nrows)
+
     def to_html(self, full_page: bool = True) -> str:
         """Return complete HTML.
 
@@ -131,29 +130,48 @@ class Figure:
         full_page:
             If True (default), wrap in a ``<!DOCTYPE html>`` page.
             If False, return only the ``<div class="hp-figure">…</div>``
-            block — suitable for embedding in a larger HTML document.
-            Either way the required CSS is included.
+            fragment — suitable for Jupyter or embedding.
         """
+        cell_h = self._cell_height()
+
         if self._ncols > 1 and self._axes:
             rows_html: list[str] = []
+            # When height is constrained, rows share the figure height equally
+            row_style = ' style="flex:1 1 0;min-height:0;"' if self.height else ""
             for i in range(0, len(self._axes), self._ncols):
                 row_cards = "\n".join(
-                    ax.to_html() for ax in self._axes[i:i + self._ncols]
+                    ax.to_html(cell_height=cell_h)
+                    for ax in self._axes[i:i + self._ncols]
                 )
-                rows_html.append(f'<div class="hp-figure-row">\n{row_cards}\n</div>')
+                rows_html.append(
+                    f'<div class="hp-figure-row"{row_style}>\n{row_cards}\n</div>'
+                )
             inner = "\n".join(rows_html)
         else:
-            inner = "\n".join(ax.to_html() for ax in self._axes)
+            inner = "\n".join(
+                ax.to_html(cell_height=cell_h) for ax in self._axes
+            )
 
-        width_style = f"max-width:{self.width}px;" if self.width else ""
-        body = (
-            f'<div class="hp-figure" style="{width_style}">\n{inner}\n</div>'
-        )
+        # ------ figure container style ------------------------------------
+        # Width: explicit > auto for grid > CSS default
+        if self.width:
+            w = self.width
+        elif self._ncols > 1:
+            w = self._ncols * 440 + (self._ncols - 1) * _ROW_GAP
+        else:
+            w = 820
+
+        fig_style = f"max-width:{w}px;"
+        if self.height:
+            # Make the figure a fixed-height flex column so rows can
+            # share the space proportionally (like matplotlib's figsize)
+            fig_style += f"height:{self.height}px;display:flex;flex-direction:column;"
+
+        body = f'<div class="hp-figure" style="{fig_style}">\n{inner}\n</div>'
 
         if full_page:
             return render_page(self.title, body, self.theme, script=get_script())
 
-        # embed mode: inline the CSS + script alongside the figure block
         css = get_css(self.theme)
         return f"<style>\n{css}\n</style>\n{body}\n{get_script()}"
 
@@ -171,13 +189,16 @@ class Figure:
         self.save(tmp)
         webbrowser.open(f"file:///{tmp.replace(os.sep, '/')}")
 
-    # Jupyter / IPython rich display
     def _repr_html_(self) -> str:
         return self.to_html(full_page=False)
 
     def __repr__(self) -> str:
         n = len(self._axes)
-        return f"<htmlplot.Figure title={self.title!r} axes={n}>"
+        dims = (
+            f"width={self.width}, height={self.height}"
+            if self.width or self.height else "auto"
+        )
+        return f"<htmlplot.Figure title={self.title!r} axes={n} {dims}>"
 
 
 # ---------------------------------------------------------------------------
@@ -191,20 +212,50 @@ def subplots(
     title: str = "Figure",
     theme: str = "dark",
     width: int | None = None,
+    height: int | None = None,
+    figsize: "tuple[int, int] | None" = None,
 ) -> "tuple[Figure, Axes] | tuple[Figure, list[Axes]] | tuple[Figure, list[list[Axes]]]":
     """Create a :class:`Figure` with a grid of :class:`Axes`.
 
-    Mirrors ``matplotlib.pyplot.subplots``:
+    Mirrors ``matplotlib.pyplot.subplots`` — returns ``(fig, ax)`` for a
+    single panel and ``(fig, axes_grid)`` for multi-panel layouts.
 
-    - ``nrows=1, ncols=1``  → returns ``(fig, ax)``
-    - ``nrows=1, ncols>1``  → returns ``(fig, [ax1, ax2, …])``
-    - ``nrows>1``           → returns ``(fig, [[ax00, ax01], [ax10, …], …])``
+    Parameters
+    ----------
+    nrows, ncols:
+        Grid dimensions.
+    title:
+        Page title.
+    theme:
+        ``"dark"`` (default) or ``"light"``.
+    width:
+        Maximum figure width in pixels.
+    height:
+        Total figure height in pixels.  Charts inside each cell are scaled
+        to fill the allocated row height automatically.
+    figsize:
+        ``(width_px, height_px)`` shorthand — overrides *width* and *height*.
+        Mirrors matplotlib's ``figsize`` (but in pixels instead of inches).
+
+    Examples
+    --------
+    ::
+
+        # Fixed 900 × 600 px dashboard with a 2 × 2 grid
+        fig, axes = hp.subplots(2, 2, figsize=(900, 600), title="Dashboard")
+        axes[0][0].bar(...)
+        axes[0][1].pie(...)
+        axes[1][0].hist(...)
+        axes[1][1].barh(...)
+        fig.show()
     """
-    fig = Figure(title=title, theme=theme, width=width, ncols=ncols)
+    if figsize is not None:
+        width, height = int(figsize[0]), int(figsize[1])
+
+    fig = Figure(title=title, theme=theme, width=width, height=height, ncols=ncols)
 
     if nrows == 1 and ncols == 1:
-        ax = fig.add_axes()
-        return fig, ax
+        return fig, fig.add_axes()
 
     grid: list[list[Axes]] = [
         [fig.add_axes() for _ in range(ncols)]

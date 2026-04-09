@@ -193,11 +193,13 @@ class Axes:
 
         bars = []
         for label, value, color in zip(labels, values, bar_colors):
-            bar_height_px = int((value / _max * height)) if _max else 0
             bars.append({
                 "label": label,
                 "value": value,
-                "bar_height_px": bar_height_px,
+                # Store the normalized fraction (0–1); pixel height is
+                # computed at render-time from the current chart_height so
+                # it rescales correctly when cell_height constrains the layout.
+                "bar_height_frac": (value / _max) if _max else 0.0,
                 "color": color,
                 "value_label": _fmt_value(value, fmt),
             })
@@ -892,7 +894,22 @@ class Axes:
     # Rendering
     # ------------------------------------------------------------------
 
-    def to_html(self) -> str:
+    # Card overhead in pixels (top-padding + bottom-padding + title block)
+    _CARD_PAD_V = 48   # 26 top + 22 bottom
+    _TITLE_H    = 35   # card-title height + its margin-bottom
+
+    def to_html(self, cell_height: int | None = None) -> str:
+        """Render this Axes as an HTML card.
+
+        Parameters
+        ----------
+        cell_height:
+            When provided (set by the parent :class:`~htmlplot.Figure` when
+            a fixed *height* / *figsize* is used), every chart inside the
+            card is scaled so that it fills the available vertical space —
+            matching matplotlib's behaviour when ``figsize`` constrains the
+            canvas height.
+        """
         parts: list[str] = []
 
         if self._title:
@@ -900,35 +917,75 @@ class Axes:
                 f'<div class="hp-card-title">{_escape(self._title)}</div>'
             )
 
-        if self._chart:
-            ct = self._chart["type"]
-            if ct == "barh":
-                parts.append(self._render_barh())
-            elif ct == "bar":
-                parts.append(self._render_bar())
-            elif ct in ("lineplot", "scatter"):
-                if self._chart.get("series"):
-                    parts.append(self._render_legend())
-                parts.append(self._render_svg_chart())
-            elif ct == "pie":
-                parts.append(self._render_pie())
-            elif ct == "boxplot":
-                parts.append(self._render_boxplot())
-            elif ct == "heatmap":
-                parts.append(self._render_heatmap())
-            elif ct == "stackedbar":
-                parts.append(self._render_stackedbar())
+        # ── Compute effective chart height from cell constraint ──────────
+        # Subtract card padding and optional title block to get the area
+        # available for the actual chart content.
+        chart_h: int | None = None
+        if cell_height is not None:
+            overhead = self._CARD_PAD_V
+            if self._title:
+                overhead += self._TITLE_H
+            chart_h = max(60, cell_height - overhead)
+
+        # ── Temporarily override chart dimensions ────────────────────────
+        # SVG charts use "svg_height"; CSS bar charts use "chart_height".
+        # We patch the dict, render, then restore — keeping the user's
+        # original intent intact for subsequent renders.
+        _SVG_CHARTS = ("lineplot", "scatter", "boxplot", "heatmap", "pie")
+        _CSS_CHARTS = ("bar", "stackedbar")
+
+        height_key: str | None = None
+        orig_h: int | None = None
+
+        if chart_h is not None and self._chart:
+            ct0 = self._chart["type"]
+            if ct0 in _SVG_CHARTS:
+                height_key = "svg_height"
+            elif ct0 in _CSS_CHARTS:
+                height_key = "chart_height"
+            if height_key:
+                orig_h = self._chart.get(height_key)
+                self._chart[height_key] = chart_h
+
+        try:
+            if self._chart:
+                ct = self._chart["type"]
+                if ct == "barh":
+                    parts.append(self._render_barh())
+                elif ct == "bar":
+                    parts.append(self._render_bar())
+                elif ct in ("lineplot", "scatter"):
+                    if self._chart.get("series"):
+                        parts.append(self._render_legend())
+                    parts.append(self._render_svg_chart())
+                elif ct == "pie":
+                    parts.append(self._render_pie())
+                elif ct == "boxplot":
+                    parts.append(self._render_boxplot())
+                elif ct == "heatmap":
+                    parts.append(self._render_heatmap())
+                elif ct == "stackedbar":
+                    parts.append(self._render_stackedbar())
+        finally:
+            # Always restore the original height so re-renders are correct
+            if height_key and orig_h is not None and self._chart:
+                self._chart[height_key] = orig_h
 
         for ann_type, ann_data in self._annotations:
             if ann_type == "infobox":
-                parts.append(
-                    f'<div class="hp-info-box">{ann_data}</div>'
-                )
+                parts.append(f'<div class="hp-info-box">{ann_data}</div>')
             elif ann_type == "divider":
                 parts.append('<div class="hp-divider"></div>')
 
         inner = "\n".join(parts)
-        return f'<div class="hp-card">\n{inner}\n</div>'
+
+        # When cell_height is constrained, fix the card height so rows in a
+        # grid all have the same height and the figure fills its allotted space.
+        card_style = (
+            f' style="height:{cell_height}px;box-sizing:border-box;"'
+            if cell_height is not None else ""
+        )
+        return f'<div class="hp-card"{card_style}>\n{inner}\n</div>'
 
     # ------------------------------------------------------------------
     # Private renderers
@@ -962,11 +1019,14 @@ class Axes:
         cols = []
         for b in bars:
             tip = _tip(b["label"], b["value_label"])
+            # Recompute pixel height from fraction × current chart_height so
+            # the bars scale correctly whenever chart_height is overridden.
+            bar_px = int(b.get("bar_height_frac", 0.0) * ch)
             cols.append(
                 f'<div class="hp-bar-col" data-tip="{tip}">'
                 f'<div class="hp-bar-value-label">{_escape(b["value_label"])}</div>'
                 f'<div class="hp-bar-body" '
-                f'style="height:{b["bar_height_px"]}px;background:{b["color"]};"></div>'
+                f'style="height:{bar_px}px;background:{b["color"]};"></div>'
                 f'<div class="hp-bar-baseline"></div>'
                 f'<div class="hp-bar-xlabel">{_escape(str(b["label"]))}</div>'
                 f'</div>'
@@ -1059,10 +1119,11 @@ class Axes:
         # --- Layout ----------------------------------------------------------
         W = 520
         H = svg_height
-        # More left margin when ylabel is present
-        ML = 52 if ylabel else 28
-        MR, MT = 18, 12
-        MB = 40 if xlabel else 24
+        # Left margin: enough room for y-tick labels (≤7 chars at font-size 10)
+        ML = 58 if ylabel else 46
+        MR, MT = 20, 14
+        # Bottom margin: space for x-tick labels + xlabel; extra 4 px for descenders
+        MB = 46 if xlabel else 28
         CW = W - ML - MR
         CH = H - MT - MB
 
@@ -1104,7 +1165,7 @@ class Axes:
         parts.append(
             f'<div class="hp-svg-wrap">'
             f'<svg viewBox="0 0 {W} {H}" width="100%" '
-            f'style="display:block;overflow:visible;">'
+            f'style="display:block;overflow:hidden;">'
             f'<defs><clipPath id="{clip_id}">'
             f'<rect x="{ML}" y="{MT}" width="{CW}" height="{CH}"/>'
             f'</clipPath></defs>'
@@ -1148,7 +1209,7 @@ class Axes:
         # Axis labels
         if xlabel:
             parts.append(
-                f'<text x="{ML + CW / 2:.1f}" y="{H - 4}" '
+                f'<text x="{ML + CW / 2:.1f}" y="{H - 8}" '
                 f'text-anchor="middle" font-size="10" {_label_fill} {_font}>'
                 f'{_escape(xlabel)}</text>'
             )
@@ -1285,7 +1346,7 @@ class Axes:
         parts.append(
             f'<div class="hp-svg-wrap">'
             f'<svg viewBox="0 0 {W} {H}" width="100%" '
-            f'style="display:block;overflow:visible;">'
+            f'style="display:block;overflow:hidden;">'
         )
 
         if shadow:
@@ -1481,9 +1542,9 @@ class Axes:
         _lf = 'fill="#5a6a80"'
 
         W = 520
-        ML = 52 if ylabel else 28
-        MR, MT = 18, 12
-        MB = 40 if xlabel else 24
+        ML = 58 if ylabel else 46
+        MR, MT = 20, 14
+        MB = 46 if xlabel else 28
         CW = W - ML - MR
         CH = H - MT - MB
 
@@ -1517,7 +1578,7 @@ class Axes:
         parts.append(
             f'<div class="hp-svg-wrap">'
             f'<svg viewBox="0 0 {W} {H}" width="100%" '
-            f'style="display:block;overflow:visible;">'
+            f'style="display:block;overflow:hidden;">'
         )
 
         # Y grid + labels
@@ -1544,7 +1605,7 @@ class Axes:
 
         if xlabel:
             parts.append(
-                f'<text x="{ML+CW/2:.1f}" y="{H-4}" text-anchor="middle" '
+                f'<text x="{ML+CW/2:.1f}" y="{H-8}" text-anchor="middle" '
                 f'font-size="10" {_lf} {_font}>{_escape(xlabel)}</text>'
             )
         if ylabel:
@@ -1697,7 +1758,7 @@ class Axes:
         parts.append(
             f'<div class="hp-svg-wrap">'
             f'<svg viewBox="0 0 {W} {H}" width="100%" '
-            f'style="display:block;overflow:visible;">'
+            f'style="display:block;overflow:hidden;">'
         )
         parts.append(
             f'<defs><clipPath id="{clip_id}">'
@@ -1826,7 +1887,9 @@ class Axes:
         cols: list[str] = []
         for j, lbl in enumerate(labels):
             total_val = sum(s["segments"][j]["value"] for s in series)
-            total_h_px = int(total_val / max_total * ch) if max_total else 0
+            # Recompute pixel height from fraction × current chart_height so
+            # the columns rescale correctly when chart_height is overridden.
+            total_px = int((total_val / max_total * ch)) if max_total else 0
             total_label = _fmt_value(total_val, fmt)
 
             # Segments: first series → bottom (flex-direction: column-reverse)
@@ -1845,7 +1908,7 @@ class Axes:
             cols.append(
                 f'<div class="hp-bar-col">'
                 f'<div class="hp-bar-value-label">{_escape(total_label)}</div>'
-                f'<div class="hp-sbar-body" style="height:{total_h_px}px;">'
+                f'<div class="hp-sbar-body" style="height:{total_px}px;">'
                 f'{inner}'
                 f'</div>'
                 f'<div class="hp-bar-baseline"></div>'

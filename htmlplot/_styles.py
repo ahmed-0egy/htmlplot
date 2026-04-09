@@ -7,6 +7,7 @@ _DARK_CSS = """\
   display: flex;
   flex-direction: column;
   gap: 16px;
+  /* max-width is controlled via inline style so grid layouts can widen it */
   max-width: 820px;
   margin: 0 auto;
   color: #e0e6f0;
@@ -18,7 +19,12 @@ _DARK_CSS = """\
   border: 1px solid #232a38;
   border-radius: 14px;
   padding: 26px 30px 22px;
-  box-shadow: 0 6px 32px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.40);
+  /* Hard boundary: nothing may bleed outside the card */
+  overflow: hidden;
+  position: relative;
+  box-sizing: border-box;
+  min-width: 0;
 }
 
 .hp-card-title {
@@ -235,11 +241,13 @@ _DARK_CSS = """\
 .hp-figure-row {
   display: flex;
   gap: 16px;
+  align-items: stretch;   /* all cells in a row share the same height */
 }
 
 .hp-figure-row .hp-card {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 0;            /* grow, shrink, start from 0 (equal columns) */
+  min-width: 0;           /* allow shrinking below intrinsic content size */
+  overflow: hidden;       /* hard cell boundary */
 }
 
 /* Stacked bar chart ----------------------------------------------------- */
@@ -280,6 +288,10 @@ _LIGHT_CSS = """\
   border-radius: 14px;
   padding: 26px 30px 22px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.07);
+  overflow: hidden;
+  position: relative;
+  box-sizing: border-box;
+  min-width: 0;
 }
 
 .hp-card-title {
@@ -486,11 +498,13 @@ _LIGHT_CSS = """\
 .hp-figure-row {
   display: flex;
   gap: 16px;
+  align-items: stretch;
 }
 
 .hp-figure-row .hp-card {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
+  overflow: hidden;
 }
 
 /* Stacked bar chart ----------------------------------------------------- */

@@ -2,18 +2,24 @@
 
 Charts covered
 --------------
-1.  Horizontal bar  (barh)          – palette, sort, infobox
-2.  Vertical bar    (bar)           – light theme, sort
-3.  Histogram       (hist)          – density, cumulative, weights, horizontal
-4.  Line chart      (lineplot)      – multi-series, CI bands
-5.  Scatter plot    (scatter)       – multi-series
-6.  KM / step curve (kmplot)        – confidence intervals
-7.  Pie chart       (pie)           – autopct, explode, shadow
-8.  Donut chart     (pie + donut)   – 50 % hole
-9.  Box plot        (boxplot)       – notch, means, fliers
-10. Heatmap         (heatmap)       – annotations, colorbar, viridis
-11. Stacked bar     (stackedbar)    – 100 % normalised
-12. Subplots grid   (2 × 2)         – mixed chart types
+1.  Horizontal bar  (barh)                  – palette, sort, infobox
+2.  Vertical bar    (bar)                   – light theme, sort
+3a. Histogram       (hist, density)
+3b. Histogram       (hist, cumulative)
+3c. Histogram       (hist, weighted, horizontal)
+4.  Line chart      (lineplot)              – multi-series, CI bands
+5.  Scatter plot    (scatter)               – multi-series
+6.  KM / step curve (kmplot)               – confidence intervals
+7.  Pie chart       (pie)                   – autopct, explode, shadow
+8.  Donut chart     (pie + donut)           – 50 % hole
+9.  Box plot        (boxplot)               – notch, means, fliers
+10. Heatmap         (heatmap)               – annotations, colorbar, viridis
+11a. Stacked bar    (stackedbar, absolute)
+11b. Stacked bar    (stackedbar, 100 % normalised)
+12. Subplots grid 2×2 – no explicit figsize (auto-sized)
+13. figsize demo – fixed 900×580 px dashboard (figsize=(900, 580))
+14. Compact single chart – width=480, height=320
+15. Tight 3×2 grid – figsize=(1000, 680) with many cells
 """
 
 import sys
@@ -327,29 +333,149 @@ axes12[1][1].barh(
 
 
 # ---------------------------------------------------------------------------
+# 13 – figsize: fixed-size 900 × 580 px dashboard  (2 × 2)
+#
+#  figsize=(width_px, height_px) mirrors matplotlib's figsize=(w_in, h_in).
+#  Charts inside each cell are automatically scaled to fill the row height.
+# ---------------------------------------------------------------------------
+fig13, axes13 = hp.subplots(
+    nrows=2, ncols=2,
+    figsize=(900, 580),          # ← total canvas: 900 px wide, 580 px tall
+    title="Fixed-size Dashboard (900 × 580 px)",
+)
+
+axes13[0][0].bar(
+    ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
+    [82, 74, 91, 68, 95, 88],
+    title="Monthly revenue ($k)",
+    palette="blues",
+)
+axes13[0][1].pie(
+    [48, 31, 21],
+    labels=["Direct", "Organic", "Paid"],
+    title="Traffic sources",
+    autopct="%.0f%%",
+    donut=0.45,
+    colors=["#4a82c8", "#2ed090", "#f0a030"],
+)
+axes13[1][0].boxplot(
+    [make_group(60, 10, 50), make_group(75, 8, 50), make_group(55, 14, 50)],
+    labels=["Group A", "Group B", "Group C"],
+    title="Score distribution",
+    patch_artist=True,
+)
+axes13[1][1].barh(
+    ["Python", "SQL", "R", "Julia", "Scala"],
+    [88, 76, 61, 34, 29],
+    title="Language popularity",
+    fmt="{:.0f}",
+    palette="purples",
+)
+
+
+# ---------------------------------------------------------------------------
+# 14 – Compact single chart with explicit width + height
+#
+#  Use width= and height= directly on subplots() for a single panel.
+#  The chart inside shrinks to fill the constrained canvas.
+# ---------------------------------------------------------------------------
+fig14, ax14 = hp.subplots(
+    title="Compact chart (480 × 320 px)",
+    width=480,
+    height=320,
+)
+ax14.lineplot(
+    [days, days],
+    [trend_a, trend_b],
+    title="Recovery index (compact view)",
+    labels=["Low-risk", "High-risk"],
+    colors=["#2ed090", "#f0604a"],
+    xlabel="Day",
+    ylabel="Index",
+)
+
+
+# ---------------------------------------------------------------------------
+# 15 – Tight 3 × 2 grid  (figsize=(1 000, 680))
+#
+#  Six cells in three columns — all scaled to fit the fixed canvas.
+#  This mirrors what matplotlib does when you put many subplots in a small
+#  figsize: everything compresses to fit inside the allotted space.
+# ---------------------------------------------------------------------------
+fig15, axes15 = hp.subplots(
+    nrows=2, ncols=3,
+    figsize=(1000, 680),
+    title="Tight 3 × 2 Grid (1 000 × 680 px)",
+)
+
+axes15[0][0].bar(
+    ["A", "B", "C", "D", "E"],
+    [10, 25, 18, 30, 22],
+    title="Group counts",
+    palette="blues",
+)
+axes15[0][1].hist(
+    [random.gauss(5, 1.5) for _ in range(300)],
+    bins=12,
+    title="Distribution",
+    density=True,
+    palette="teals",
+)
+axes15[0][2].pie(
+    [40, 35, 25],
+    labels=["X", "Y", "Z"],
+    title="Share",
+    autopct="%.0f%%",
+)
+axes15[1][0].scatter(
+    [xa[:25], xb[:25]],
+    [ya[:25], yb[:25]],
+    labels=["Cluster A", "Cluster B"],
+    colors=["#4a82c8", "#f0a030"],
+    title="Clusters",
+    xlabel="F1", ylabel="F2",
+)
+axes15[1][1].stackedbar(
+    ["Q1", "Q2", "Q3"],
+    {"Alpha": [30, 40, 35], "Beta": [20, 25, 30], "Gamma": [10, 15, 12]},
+    title="Stacked revenue",
+)
+axes15[1][2].barh(
+    ["EMEA", "AMER", "APAC"],
+    [45, 35, 20],
+    title="Region split",
+    fmt="{:.0f}%",
+    palette="ryg",
+)
+
+
+# ---------------------------------------------------------------------------
 # Save all figures
 # ---------------------------------------------------------------------------
 figures = [
-    (fig1,  "demo_01_barh"),
-    (fig2,  "demo_02_bar_light"),
-    (fig3a, "demo_03a_hist_density"),
-    (fig3b, "demo_03b_hist_cumulative"),
-    (fig3c, "demo_03c_hist_weighted_horiz"),
-    (fig4,  "demo_04_lineplot"),
-    (fig5,  "demo_05_scatter"),
-    (fig6,  "demo_06_kmplot"),
-    (fig7,  "demo_07_pie"),
-    (fig8,  "demo_08_donut"),
-    (fig9,  "demo_09_boxplot"),
-    (fig10, "demo_10_heatmap"),
-    (fig11a,"demo_11a_stackedbar"),
-    (fig11b,"demo_11b_stackedbar_normalised"),
-    (fig12, "demo_12_subplots_grid"),
+    (fig1,   "demo_01_barh"),
+    (fig2,   "demo_02_bar_light"),
+    (fig3a,  "demo_03a_hist_density"),
+    (fig3b,  "demo_03b_hist_cumulative"),
+    (fig3c,  "demo_03c_hist_weighted_horiz"),
+    (fig4,   "demo_04_lineplot"),
+    (fig5,   "demo_05_scatter"),
+    (fig6,   "demo_06_kmplot"),
+    (fig7,   "demo_07_pie"),
+    (fig8,   "demo_08_donut"),
+    (fig9,   "demo_09_boxplot"),
+    (fig10,  "demo_10_heatmap"),
+    (fig11a, "demo_11a_stackedbar"),
+    (fig11b, "demo_11b_stackedbar_normalised"),
+    (fig12,  "demo_12_subplots_grid"),
+    (fig13,  "demo_13_figsize_dashboard"),
+    (fig14,  "demo_14_compact_single"),
+    (fig15,  "demo_15_tight_3x2_grid"),
 ]
 
 for fig, name in figures:
     path = fig.save(os.path.join(out_dir, f"{name}.html"))
     print(f"Saved: {path}")
 
-# Open the most feature-rich demo in the browser
-fig12.show()
+# Open the fixed-size dashboard to show figsize in action
+fig13.show()
